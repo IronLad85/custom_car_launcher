@@ -22,6 +22,9 @@ class Esp32DataSource : CarDataSource {
     private var latest = CarSnapshot()
 
     @Volatile
+    private var lastRawJson: String? = null
+
+    @Volatile
     private var connected = false
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -36,6 +39,7 @@ class Esp32DataSource : CarDataSource {
                     conn.readTimeout = 2000
                     conn.inputStream.bufferedReader().use { reader ->
                         val text = reader.readText()
+                        lastRawJson = text
                         latest = parse(text)
                         if (!wasConnected) Log.i(TAG, "Connected to ESP32 bridge: $text")
                         Log.d(TAG, snapshotLog(latest))
@@ -61,6 +65,8 @@ class Esp32DataSource : CarDataSource {
         connected = true
     }
 
+    override fun signalDump(): String? = if (connected) lastRawJson else null
+
     private fun parse(json: String): CarSnapshot {
         val root = JSONObject(json)
         val sensors = root.optJSONObject("sensors") ?: return CarSnapshot()
@@ -77,6 +83,7 @@ class Esp32DataSource : CarDataSource {
                 fanLevel = 4,
             ),
             steeringFraction = value("LW1_STEERING_ANGLE").toFloat().coerceIn(0f, 1f),
+            highBeam = lit("HIGH_BEAM"),
             turnLeftLamp = lit("TURN_LEFT_LAMP"),
             turnRightLamp = lit("TURN_RIGHT_LAMP"),
             fogLight = lit("FOG_LIGHT"),

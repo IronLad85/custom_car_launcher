@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.SurfaceLowest
 import com.example.carheadunit.ui.theme.White20
@@ -84,31 +85,44 @@ fun SteeringTrack(modifier: Modifier = Modifier, activeFraction: Float = 0.65f) 
                 )
             }
 
-            // Active fill: 30% of the track starting at center
-            val fillW = trackW * 0.30f
-            drawRoundRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(PrimaryContainer.copy(alpha = 0.4f), PrimaryContainer),
-                    startX = cx,
-                    endX = cx + fillW,
-                ),
-                topLeft = Offset(cx, top + 2.dp.toPx()),
-                size = Size(fillW, trackH - 4.dp.toPx()),
-                cornerRadius = CornerRadius(4.dp.toPx()),
-            )
-            // Four mini-bars inside the fill
-            for (i in 0..3) {
-                val bx = cx + fillW * (i + 0.5f) / 4f
-                drawLine(
-                    color = Color.White.copy(alpha = 0.4f),
-                    start = Offset(bx, size.height / 2 - 6.dp.toPx()),
-                    end = Offset(bx, size.height / 2 + 6.dp.toPx()),
-                    strokeWidth = 3.dp.toPx(),
-                )
-            }
+            // Thumb position (live steering angle, 0..1 across the track)
+            val tx = left + trackW * activeFraction.coerceIn(0f, 1f)
 
-            // Thumb at activeFraction of the track, glowing
-            val tx = left + trackW * activeFraction
+            // Active fill: spans from the center line to the thumb — the live
+            // steering direction, brightening toward the wheel's position
+            val fillStart = minOf(cx, tx)
+            val fillEnd = maxOf(cx, tx)
+            val fillW = fillEnd - fillStart
+            // Extreme steering (beyond ~70% of travel) tints the fill amber
+            val extreme = abs(activeFraction - 0.5f) > 0.35f
+            val fillColor = if (extreme) Color(0xFFFFC84A) else PrimaryContainer
+            if (fillW > 0.5f) {
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = if (tx >= cx) {
+                            listOf(fillColor.copy(alpha = 0.35f), fillColor)
+                        } else {
+                            listOf(fillColor, fillColor.copy(alpha = 0.35f))
+                        },
+                        startX = fillStart,
+                        endX = fillEnd,
+                    ),
+                    topLeft = Offset(fillStart, top + 2.dp.toPx()),
+                    size = Size(fillW, trackH - 4.dp.toPx()),
+                    cornerRadius = CornerRadius(4.dp.toPx()),
+                )
+                // Mini-bars across the fill
+                val barCount = (fillW / 22.dp.toPx()).toInt().coerceIn(2, 6)
+                for (i in 0 until barCount) {
+                    val bx = fillStart + fillW * (i + 0.5f) / barCount
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.4f),
+                        start = Offset(bx, size.height / 2 - 6.dp.toPx()),
+                        end = Offset(bx, size.height / 2 + 6.dp.toPx()),
+                        strokeWidth = 3.dp.toPx(),
+                    )
+                }
+            }
             drawLine(
                 color = Color.White.copy(alpha = 0.30f),
                 start = Offset(tx, size.height / 2 - 11.dp.toPx()),

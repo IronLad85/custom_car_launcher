@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -30,7 +32,7 @@ import com.example.carheadunit.ui.components.IndicatorBar
 import com.example.carheadunit.ui.components.MediaTile
 import com.example.carheadunit.ui.components.MetricsTile
 import com.example.carheadunit.ui.components.NavDock
-import com.example.carheadunit.ui.components.NavTile
+import com.example.carheadunit.ui.components.AutoTile
 import com.example.carheadunit.ui.components.SpeedoTile
 import com.example.carheadunit.ui.components.SteeringTrack
 import com.example.carheadunit.ui.theme.CarHeadUnitTheme
@@ -52,6 +54,10 @@ fun HomeScreen(
     onLaunch: (AppEntry) -> Unit,
     onTogglePin: (String) -> Unit,
     onTogglePlayback: () -> Unit,
+    onNextTrack: () -> Unit,
+    onPrevTrack: () -> Unit,
+    mediaAccess: Boolean,
+    onRequestMediaAccess: () -> Unit,
     onOpenAllApps: () -> Unit,
     onCloseDrawer: () -> Unit,
 ) {
@@ -84,7 +90,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(bottom = 80.dp),
+                    .padding(bottom = 74.dp),
             )
         } else {
             Column(
@@ -98,71 +104,83 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     IndicatorBar(
                         turnLeft = snapshot.turnLeftLamp,
                         turnRight = snapshot.turnRightLamp,
                         fog = snapshot.fogLight,
                         charge = snapshot.chargeWarning,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        highBeam = snapshot.highBeam,
+                        modifier = Modifier.weight(7f).fillMaxHeight(),
                     )
                     SteeringTrack(
                         activeFraction = snapshot.steeringFraction,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        modifier = Modifier.weight(5f).fillMaxHeight(),
                     )
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(12.dp))
                 // Row 2: driving zones (columns flex; metrics/media cap at design sizes)
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    // Speed column (7/12)
                     Column(
                         modifier = Modifier
-                            .weight(7f)
+                            .weight(1f)
                             .fillMaxHeight(),
                     ) {
-                        SpeedoTile(
-                            speed = snapshot.speed,
-                            modifier = Modifier
-                                .weight(1.06f)
-                                .fillMaxWidth()
-                                .heightIn(min = 66.dp),
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        MetricsTile(
-                            snapshot = snapshot,
-                            modifier = Modifier
-                                .weight(0.765f)
-                                .fillMaxWidth()
-                                .heightIn(min = 55.dp, max = 122.dp),
-                        )
-                    }
-                    // Navigation column (5/12)
-                    Column(
-                        modifier = Modifier
-                            .weight(5f)
-                            .fillMaxHeight(),
-                    ) {
-                        NavTile(
+                        // Top row: speed (7/12) + nav (5/12)
+                        Row(
                             modifier = Modifier
                                 .weight(1.07f)
-                                .fillMaxWidth()
-                                .heightIn(min = 69.dp),
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        MediaTile(
-                            media = snapshot.media,
-                            onTogglePlayback = onTogglePlayback,
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            SpeedoTile(
+                                speed = snapshot.speed,
+                                modifier = Modifier
+                                    .weight(7f)
+                                    .fillMaxHeight()
+                                    .heightIn(min = 66.dp),
+                            )
+                            AutoTile(
+                                modifier = Modifier
+                                    .weight(5f)
+                                    .fillMaxHeight()
+                                    .heightIn(min = 69.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        // Bottom row: media (5/12) + metrics (7/12) — same width as the speed tile
+                        Row(
                             modifier = Modifier
                                 .weight(0.765f)
-                                .fillMaxWidth()
-                                .heightIn(min = 73.dp, max = 147.dp),
-                        )
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            MediaTile(
+                                media = snapshot.media,
+                                mediaAccess = mediaAccess,
+                                onTogglePlayback = onTogglePlayback,
+                                onNext = onNextTrack,
+                                onPrev = onPrevTrack,
+                                onRequestMediaAccess = onRequestMediaAccess,
+                                modifier = Modifier
+                                    .weight(5f)
+                                    .fillMaxHeight()
+                                    .heightIn(min = 73.dp, max = 147.dp),
+                            )
+                            MetricsTile(
+                                snapshot = snapshot,
+                                modifier = Modifier
+                                    .weight(7f)
+                                    .fillMaxHeight()
+                                    .heightIn(min = 55.dp, max = 122.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -190,6 +208,10 @@ private fun HomeScreenPreview() {
             onLaunch = {},
             onTogglePin = {},
             onTogglePlayback = {},
+            onNextTrack = {},
+            onPrevTrack = {},
+            mediaAccess = false,
+            onRequestMediaAccess = {},
             onOpenAllApps = {},
             onCloseDrawer = {},
         )

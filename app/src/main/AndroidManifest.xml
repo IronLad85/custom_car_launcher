@@ -4,6 +4,7 @@
 
     <!-- ESP32 bridge: the launcher polls http://10.0.2.2:8080/state (host loopback) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Declares compatibility with automotive devices; not required to install elsewhere. -->
     <uses-feature
@@ -31,6 +32,18 @@
         android:theme="@style/Theme.CarHeadUnit"
         tools:targetApi="34">
 
+        <!-- Reads the active media notification for the now-playing tile.
+             Requires the user to grant "Notification access" in Settings. -->
+        <service
+            android:name=".data.MediaNotificationService"
+            android:exported="false"
+            android:label="Media notifications"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -55,6 +68,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- USB attach for the CAN Sniffer (ESP32-S3) -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.device_filter"
+                android:resource="@xml/usb_device_filter" />
         </activity>
     </application>
 

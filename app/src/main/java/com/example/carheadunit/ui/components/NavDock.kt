@@ -28,13 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import com.example.carheadunit.R
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.ui.theme.OnSurface
@@ -75,7 +72,7 @@ fun NavDock(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp),
+                .height(66.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceAround,
         ) {
@@ -113,14 +110,15 @@ private fun DockItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        val bitmap = remember(app.packageName) { app.icon.toBitmap() }
         Image(
-            painter = BitmapPainter(bitmap.asImageBitmap()),
+            bitmap = app.icon,
             contentDescription = app.label,
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(45.dp),
         )
     }
 }
+
+
 
 @Composable
 private fun AllAppsItem(active: Boolean, onClick: () -> Unit) {
@@ -136,7 +134,7 @@ private fun AllAppsItem(active: Boolean, onClick: () -> Unit) {
             painter = painterResource(R.drawable.ic_apps_grid),
             contentDescription = stringResource(R.string.all_apps_cd),
             tint = if (active) PrimaryContainer else OnSurfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(45.dp),
         )
         if (active) {
             Box(

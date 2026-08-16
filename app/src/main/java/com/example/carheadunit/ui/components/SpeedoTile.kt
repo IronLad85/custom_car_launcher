@@ -25,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -46,12 +45,13 @@ import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.PrimaryFixed
 import com.example.carheadunit.ui.theme.PrimaryFixedDim
 import com.example.carheadunit.ui.theme.SurfaceHighest
+import kotlin.math.roundToInt
 
 /** Main speedometer tile: dot-grid decor, big km/h readout, speed/RPM bars, gear, car render. */
 @Composable
 fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
     val kmh = speed.kmh
-    val speedFrac = (kmh / 180f).coerceIn(0f, 1f)
+    val speedFrac = (kmh / 200f).coerceIn(0f, 1f)
     val rpm = 0.9f + kmh * 0.014f
 
     GlassPanel(modifier = modifier, contentPadding = 0.dp) {
@@ -85,9 +85,9 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                     val compact = maxHeight < 150.dp
                     // Readout scales with the tile: design 64px on tall screens
                     val readoutSize = when {
-                        compact -> 34
-                        maxHeight < 280.dp -> 54
-                        else -> 72
+                        compact -> 46
+                        maxHeight < 280.dp -> 72
+                        else -> 96
                     }
                     val readoutStyle = androidx.compose.material3.MaterialTheme.typography.displayLarge
                         .copy(
@@ -98,11 +98,11 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                     Column(verticalArrangement = Arrangement.Center) {
                         // Speed readout with cyan glow
                         Box {
+                            // Glow via a translucent duplicate — no GPU blur on weak SoCs
                             Text(
                                 text = "$kmh",
                                 style = readoutStyle,
-                                color = PrimaryContainer.copy(alpha = 0.55f),
-                                modifier = Modifier.blur(6.dp),
+                                color = PrimaryContainer.copy(alpha = 0.35f),
                             )
                             Row(verticalAlignment = Alignment.Bottom) {
                                 Text(
@@ -119,8 +119,11 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                                 )
                             }
                         }
-                        Spacer(Modifier.height(if (compact) 4.dp else 8.dp))
-                        // Speed bar: cyan fill, white right-edge marker
+                        Spacer(Modifier.height(if (compact) 3.dp else 4.dp))
+                        // Speed bar: 0-200 km/h heat ramp. The filled portion shows
+                        // its part of the full gradient; the unfilled portion is
+                        // darkened so the fill reads clearly against it.
+                        val speedStops = (0..8).map { speedHeatColor(it / 8f) }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -129,26 +132,40 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                                 .background(SurfaceHighest)
                                 .border(1.dp, OutlineVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(speedFrac)
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(PrimaryContainer.copy(alpha = 0.6f), PrimaryContainer),
-                                        )
-                                    ),
-                            ) {
+                            Row(Modifier.fillMaxSize()) {
                                 Box(
                                     modifier = Modifier
-                                        .align(Alignment.CenterEnd)
-                                        .width(3.dp)
+                                        .weight(speedFrac.coerceAtLeast(0.0001f))
+                                        .fillMaxHeight(),
+                                ) {
+                                    Canvas(Modifier.fillMaxSize()) {
+                                        // Gradient spans the FULL bar width, so the
+                                        // fill shows only its own portion of the ramp
+                                        drawRect(
+                                            brush = Brush.horizontalGradient(
+                                                colors = speedStops,
+                                                startX = 0f,
+                                                endX = if (speedFrac > 0.01f) size.width / speedFrac else size.width,
+                                            ),
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .width(3.dp)
+                                            .fillMaxHeight()
+                                            .background(Color.White.copy(alpha = 0.7f)),
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight((1f - speedFrac).coerceAtLeast(0.0001f))
                                         .fillMaxHeight()
-                                        .background(Color.White.copy(alpha = 0.7f)),
+                                        .background(Color.Black.copy(alpha = 0.30f)),
                                 )
                             }
                         }
-                        Spacer(Modifier.height(if (compact) 4.dp else 12.dp))
+                        Spacer(Modifier.height(if (compact) 3.dp else 8.dp))
                         // RPM label + value (hidden in compact mode)
                         if (!compact) {
                             Row(
@@ -169,42 +186,36 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                             }
                             Spacer(Modifier.height(6.dp))
                         }
-                        // RPM bar: 40% cyan fill + red zone on the right 20%
-                        Box(
+                        // RPM: stepped heat bar. The ramp is tuned to real driving:
+                        // 0-2.5k cyan (daily zone), 2.5-3k cyan→yellow, 3k+ yellow→red,
+                        // full red at ~8k (redline).
+                        val rpmFrac = (rpm / 8f).coerceIn(0f, 1f)
+                        val rpmSegments = 40
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (compact) 12.dp else 16.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(SurfaceHighest)
-                                .border(1.dp, OutlineVariant.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
+                                .height(if (compact) 16.dp else 24.dp),
+                            horizontalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
-                            Row(Modifier.fillMaxSize()) {
+                            repeat(rpmSegments) { i ->
+                                // Each segment blends into its neighbor's color, so the
+                                // ramp reads as one continuous gradient through the steps.
+                                val tFrom = i / (rpmSegments - 1f)
+                                val tTo = (i + 1) / (rpmSegments - 1f)
+                                val cFrom = rpmHeatColor(tFrom)
+                                val cTo = rpmHeatColor(tTo)
+                                // Fractional leading edge: the boundary segment fades
+                                // from ghost (0.08) to full brightness instead of snapping.
+                                val fill = rpmFrac * rpmSegments - i
+                                val alpha = 0.08f + 0.92f * fill.coerceIn(0f, 1f)
                                 Box(
                                     modifier = Modifier
-                                        .weight(0.4f)
+                                        .weight(1f)
                                         .fillMaxHeight()
+                                        .clip(RoundedCornerShape(1.dp))
                                         .background(
                                             Brush.horizontalGradient(
-                                                listOf(PrimaryContainer.copy(alpha = 0.4f), PrimaryContainer),
-                                            )
-                                        ),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.CenterEnd)
-                                            .width(2.dp)
-                                            .fillMaxHeight()
-                                            .background(Color.White.copy(alpha = 0.5f)),
-                                    )
-                                }
-                                Spacer(Modifier.weight(0.4f))
-                                Box(
-                                    modifier = Modifier
-                                        .weight(0.2f)
-                                        .fillMaxHeight()
-                                        .background(
-                                            Brush.horizontalGradient(
-                                                listOf(ErrorRed.copy(alpha = 0f), ErrorRed.copy(alpha = 0.6f)),
+                                                listOf(cFrom.copy(alpha = alpha), cTo.copy(alpha = alpha)),
                                             )
                                         ),
                                 )
@@ -213,41 +224,52 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                         // Gear mark removed to keep the speed card cleaner and shorter.
                     }
                 }
-                // Right 33%: total miles card, keeping the bar area primary
+                // Right 33%: car image
                 Box(
                     modifier = Modifier
                         .weight(0.33f)
                         .fillMaxHeight(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(
+                    Image(
+                        painter = painterResource(R.drawable.vento),
+                        contentDescription = null,
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_speed),
-                            contentDescription = null,
-                            tint = PrimaryFixedDim.copy(alpha = 0.8f),
-                            modifier = Modifier.size(26.dp),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "14,204",
-                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 17.sp, lineHeight = 20.sp),
-                            color = OnSurface,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = "TOTAL MILES",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 12.sp),
-                            color = OnSurfaceVariant.copy(alpha = 0.5f),
-                        )
-                    }
+                            .fillMaxSize(0.95f)
+                            .padding(top = 8.dp, bottom = 6.dp),
+                        contentScale = ContentScale.Fit,
+                    )
                 }
             }
         }
     }
+}
+
+/**
+ * Speed heat ramp over 0-200 km/h: cyan at low speed, green through the
+ * cruising band, amber as it climbs, and full red at 200.
+ */
+private fun speedHeatColor(t: Float): Color = when {
+    t < 0.4f -> androidx.compose.ui.graphics.lerp(PrimaryContainer, Color(0xFF79FF5B), t / 0.4f)
+    t < 0.65f -> androidx.compose.ui.graphics.lerp(Color(0xFF79FF5B), Color(0xFFFFC84A), (t - 0.4f) / 0.25f)
+    t < 0.85f -> androidx.compose.ui.graphics.lerp(Color(0xFFFFC84A), Color(0xFFFF6B35), (t - 0.65f) / 0.2f)
+    else -> androidx.compose.ui.graphics.lerp(Color(0xFFFF6B35), ErrorRed, (t - 0.85f) / 0.15f)
+}
+
+/**
+ * RPM heat ramp over the 0-8k range, tuned to daily driving:
+ * 0-2.5k stays cyan (normal zone), 2.5-3k blends to yellow, 3-5.5k goes
+ * yellow→orange, and 5.5-8k climbs orange→full red (most red at redline).
+ */
+private fun rpmHeatColor(t: Float): Color = when {
+    t < 0.3125f -> PrimaryContainer // 0-2.5k
+    t < 0.375f -> androidx.compose.ui.graphics.lerp(
+        PrimaryContainer, Color(0xFFFFC84A), (t - 0.3125f) / 0.0625f,
+    ) // 2.5-3k
+    t < 0.6875f -> androidx.compose.ui.graphics.lerp(
+        Color(0xFFFFC84A), Color(0xFFFF6B35), (t - 0.375f) / 0.3125f,
+    ) // 3-5.5k
+    else -> androidx.compose.ui.graphics.lerp(
+        Color(0xFFFF6B35), ErrorRed, (t - 0.6875f) / 0.3125f,
+    ) // 5.5-8k
 }

@@ -4,10 +4,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import java.text.Collator
 
-/** Enumerates and launches installed apps. Visibility is granted by the <queries> block in the manifest. */
+/**
+ * Enumerates and launches installed apps. Visibility is granted by the
+ * <queries> block in the manifest. App icons are decoded once into small
+ * cached bitmaps (48dp @ 2x) — the drawer just draws them, so opening and
+ * scrolling the app grid stays cheap on low-end head-unit SoCs.
+ */
 class AppsRepository(private val context: Context) {
+
+    private val iconCache = HashMap<String, ImageBitmap>()
 
     /** All installed launchable apps (this launcher excluded), sorted alphabetically by label. */
     fun loadLaunchableApps(): List<AppEntry> {
@@ -38,7 +49,19 @@ class AppsRepository(private val context: Context) {
             packageName = activity.packageName,
             activityName = activity.name,
             label = loadLabel(pm)?.toString() ?: activity.packageName,
-            icon = loadIcon(pm),
+            icon = cachedIcon(pm, activity.packageName),
         )
     }
+
+    /** Decode once per package into a small bitmap; subsequent refreshes reuse it. */
+    private fun cachedIcon(pm: PackageManager, packageName: String): ImageBitmap =
+        iconCache.getOrPut(packageName) {
+            val drawable = pm.getApplicationIcon(packageName)
+            val size = (48 * context.resources.displayMetrics.density * 2).toInt()
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, size, size)
+            drawable.draw(canvas)
+            bitmap.asImageBitmap()
+        }
 }

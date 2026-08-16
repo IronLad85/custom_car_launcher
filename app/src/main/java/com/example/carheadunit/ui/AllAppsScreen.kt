@@ -29,17 +29,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import com.example.carheadunit.R
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.ui.theme.GlassBorder
@@ -138,9 +134,8 @@ private fun AppTile(
             .padding(vertical = if (rowIndex == 2) 12.dp else 16.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val bitmap = remember(app.packageName) { app.icon.toBitmap() }
         Image(
-            painter = BitmapPainter(bitmap.asImageBitmap()),
+            bitmap = app.icon,
             contentDescription = app.label,
             modifier = Modifier.size(iconSize),
         )

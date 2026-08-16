@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.carheadunit.R
@@ -57,15 +58,13 @@ fun MetricsTile(snapshot: CarSnapshot, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            PowerGauge()
-            Divider()
-            RangeSection()
+            PowerSection()
             Divider()
             OdometerSection()
             Divider()
-            ThrottleSection()
-            Divider()
             TempSection(snapshot)
+            Divider()
+            ThrottleSection()
         }
     }
 }
@@ -81,16 +80,22 @@ private fun Divider() {
     )
 }
 
+/** POWER gauge block (range removed). */
 @Composable
-private fun PowerGauge() {
+private fun PowerSection() {
     BoxWithConstraints {
-        // Gauge shrinks on short tiles
-        val gaugeSize = (maxHeight - 26.dp).coerceIn(38.dp, 52.dp)
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-            Box(Modifier.size(gaugeSize), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val stroke = 2.5.dp.toPx()
+        val gaugeSize = (maxHeight - 28.dp).coerceIn(52.dp, 84.dp)
+        PowerGauge(gaugeSize)
+    }
+}
+
+@Composable
+private fun PowerGauge(gaugeSize: Dp) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+        Box(Modifier.size(gaugeSize), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 2.5.dp.toPx()
                 val r = size.minDimension / 2f - stroke
                 val topLeft = Offset(size.width / 2 - r, size.height / 2 - r)
                 val arcSize = Size(2 * r, 2 * r)
@@ -118,53 +123,7 @@ private fun PowerGauge() {
                 )
             }
             Text("42%", style = MaterialTheme.typography.bodySmall, color = Primary)
-            }
         }
-    }
-}
-
-@Composable
-private fun RangeSection() {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("RANGE", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-        // Glow underlay for the lit segments
-        Box {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier
-                    .width(64.dp)
-                    .height(6.dp)
-                    .blur(3.dp),
-            ) {
-                repeat(4) { i ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (i < 3) SecondaryFixed else Color.Transparent),
-                    )
-                }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier
-                    .width(64.dp)
-                    .height(6.dp),
-            ) {
-                repeat(4) { i ->
-                    val lit = i < 3
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (lit) SecondaryFixed else SurfaceHighest),
-                    )
-                }
-            }
-        }
-        Text("240 mi", style = MaterialTheme.typography.bodySmall, color = SecondaryFixed)
     }
 }
 
@@ -172,34 +131,45 @@ private fun RangeSection() {
 private fun OdometerSection() {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_speed),
-            contentDescription = null,
-            tint = PrimaryFixedDim.copy(alpha = 0.8f),
-            modifier = Modifier.size(22.dp),
-        )
-        Text(
-            text = "14,204",
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 19.5.sp, lineHeight = 22.5.sp),
-            color = OnSurface,
-        )
-        Text("TOTAL MILES", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant.copy(alpha = 0.5f))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "128",
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 24.sp, lineHeight = 26.sp),
+                color = OnSurface,
+            )
+            Text("TODAY KM", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant.copy(alpha = 0.5f))
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "14,204",
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 24.sp, lineHeight = 26.sp),
+                color = OnSurface,
+            )
+            Text("TOTAL KM", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant.copy(alpha = 0.5f))
+        }
     }
 }
 
 @Composable
 private fun ThrottleSection() {
-    val segments = 12
-    val litCount = 2 // 15% of 12
+    val segments = 14
+    val litCount = 2 // 15% of 14
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("THROTTLE", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
         Column(
             modifier = Modifier
-                .height(40.dp)
-                .width(8.dp),
-            verticalArrangement = Arrangement.spacedBy(1.dp),
+                .height(90.dp)
+                .width(24.dp)
+                .padding(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             repeat(segments) { i ->
                 // level 0 at the bottom, rising toward the top
@@ -211,7 +181,7 @@ private fun ThrottleSection() {
                         .weight(1f)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(1.dp))
-                        .background(if (lit) heat else heat.copy(alpha = 0.22f)),
+                        .background(if (lit) heat else heat.copy(alpha = 0.08f)),
                 )
             }
         }

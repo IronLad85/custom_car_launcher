@@ -6,7 +6,12 @@ data class SpeedInfo(val kmh: Int, val unit: String = "km/h")
 
 data class ClimateInfo(val tempC: Int, val fanLevel: Int, val fanMax: Int = 8)
 
-data class MediaInfo(val trackTitle: String, val artist: String, val isPlaying: Boolean)
+data class MediaInfo(
+    val trackTitle: String,
+    val artist: String,
+    val isPlaying: Boolean,
+    val albumArt: androidx.compose.ui.graphics.ImageBitmap? = null,
+)
 
 /** One frame of car telemetry shown in the top cards. */
 data class CarSnapshot(
@@ -15,6 +20,7 @@ data class CarSnapshot(
     val media: MediaInfo = MediaInfo(trackTitle = "Midnight Drive", artist = "Neon Skyline", isPlaying = true),
     // ESP32 telemetry (defaults keep the design's static look when offline)
     val steeringFraction: Float = 0.65f,   // 0..1 across the steering track
+    val highBeam: Boolean = false,
     val turnLeftLamp: Boolean = false,
     val turnRightLamp: Boolean = false,
     val fogLight: Boolean = false,
@@ -30,6 +36,9 @@ data class CarSnapshot(
 interface CarDataSource {
     fun snapshot(): CarSnapshot
     fun togglePlayback()
+
+    /** Serialized dump of ALL received signals (for telemetry logging); null when unavailable. */
+    fun signalDump(): String? = null
 }
 
 /** Simulates telemetry: speed random-walks, temperature drifts, fan level occasionally changes. */

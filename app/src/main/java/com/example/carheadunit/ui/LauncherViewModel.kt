@@ -6,13 +6,20 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.AppsRepository
 import com.example.carheadunit.data.CarDataSource
 import com.example.carheadunit.data.CarSnapshot
-import com.example.carheadunit.data.Esp32DataSource
+import com.example.carheadunit.data.MediaActionType
+import com.example.carheadunit.data.MediaInfo
+import com.example.carheadunit.data.MediaNotificationHolder
+import com.example.carheadunit.data.MediaNotificationService
+import com.example.carheadunit.data.TelemetryLogger
+import com.example.carheadunit.data.UsbEsp32DataSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,8 +30,10 @@ import kotlinx.coroutines.launch
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appsRepository = AppsRepository(application)
-    // Live ESP32 telemetry via the Mac-side bridge; falls back to mock when unreachable.
-    private val dataSource: CarDataSource = Esp32DataSource()
+    // USB CAN Sniffer when attached; HTTP bridge (emulator dev) then mock as fallbacks.
+    private val dataSource: CarDataSource = UsbEsp32DataSource(application)
+
+    private val telemetryLogger = TelemetryLogger(application)
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -42,16 +51,33 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _drawerOpen = MutableStateFlow(false)
     val drawerOpen: StateFlow<Boolean> = _drawerOpen.asStateFlow()
 
+    private val _mediaAccess = MutableStateFlow(false)
+    val mediaAccess: StateFlow<Boolean> = _mediaAccess.asStateFlow()
+
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = refreshApps()
     }
 
     init {
         refreshApps()
+        refreshMediaAccess()
+        // Live now-playing: rebuild the media part of the snapshot the moment a
+        // notification changes (no waiting for the 1 s tick).
+        viewModelScope.launch {
+            MediaNotificationHolder.state.collect {
+                _snapshot.value = _snapshot.value.copy(media = mediaInfo())
+            }
+        }
         // Simulated telemetry tick
         viewModelScope.launch {
+            var tickCount = 0
             while (isActive) {
-                _snapshot.value = dataSource.snapshot()
+                _snapshot.value = dataSource.snapshot().copy(media = mediaInfo())
+                tickCount++
+                // Log ALL received signals every 10 s (interval, not per message)
+                if (tickCount % LOG_SAMPLE_TICKS == 0) {
+                    dataSource.signalDump()?.let { telemetryLogger.sample(it) }
+                }
                 delay(TICK_MS)
             }
         }
@@ -72,16 +98,68 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         getApplication<Application>().unregisterReceiver(packageReceiver)
+        (dataSource as? UsbEsp32DataSource)?.close()
+        telemetryLogger.close()
         super.onCleared()
     }
 
+    /** USB stream pauses while the app is backgrounded (0x50). */
+    fun onBackground() {
+        (dataSource as? UsbEsp32DataSource)?.pause()
+    }
+
+    /** USB stream resumes on foreground (0x53, snapshot refresh). */
+    fun onForeground() {
+        (dataSource as? UsbEsp32DataSource)?.resume()
+        // The user may have just granted notification access in Settings
+        refreshMediaAccess()
+    }
+
+    fun refreshMediaAccess() {
+        val app = getApplication<Application>()
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        _mediaAccess.value = nm.isNotificationListenerAccessGranted(
+            android.content.ComponentName(app, MediaNotificationService::class.java),
+        )
+    }
+
+    /** Opens the system "Notification access" settings page. */
+    fun requestMediaAccess() {
+        getApplication<Application>().startActivity(
+            Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    /** Sends a playback command through the media notification's own action intent. */
+    fun mediaControl(type: MediaActionType) {
+        MediaNotificationHolder.state.value?.actions
+            ?.firstOrNull { it.type == type }
+            ?.intent
+            ?.send()
+    }
+
+    private fun mediaInfo(): MediaInfo {
+        val data = MediaNotificationHolder.state.value
+            ?: return MediaInfo("Nothing playing", "Start music on your phone", isPlaying = false)
+        return MediaInfo(
+            trackTitle = data.title,
+            artist = data.artist,
+            isPlaying = data.isPlaying,
+            albumArt = data.albumArt?.asImageBitmap(),
+        )
+    }
+
     fun refreshApps() {
-        _apps.value = appsRepository.loadLaunchableApps()
-        // Drop pins for apps that are no longer installed
-        val installed = _apps.value.map { it.packageName }.toSet()
-        if (_pinned.value != _pinned.value.intersect(installed)) {
-            _pinned.value = _pinned.value.intersect(installed)
-            persistPins()
+        // Icon decoding + package queries are the slow part on weak SoCs — off the main thread.
+        viewModelScope.launch(Dispatchers.IO) {
+            _apps.value = appsRepository.loadLaunchableApps()
+            // Drop pins for apps that are no longer installed
+            val installed = _apps.value.map { it.packageName }.toSet()
+            if (_pinned.value != _pinned.value.intersect(installed)) {
+                _pinned.value = _pinned.value.intersect(installed)
+                persistPins()
+            }
         }
     }
 
@@ -114,6 +192,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private companion object {
         const val PREFS_NAME = "launcher_prefs"
         const val KEY_DOCK_PINS = "dock_pins"
-        const val TICK_MS = 700L
+        const val TICK_MS = 1000L
+        const val LOG_SAMPLE_TICKS = 10
     }
 }

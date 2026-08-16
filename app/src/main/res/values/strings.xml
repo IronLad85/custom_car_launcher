@@ -8,6 +8,7 @@
     <string name="media_label">Now Playing</string>
 
     <string name="all_apps">Apps</string>
+    <string name="android_auto">AA</string>
     <string name="all_apps_title">All Apps</string>
     <string name="all_apps_cd">All apps</string>
     <string name="dock_empty_hint">Long-press an app in the grid to pin it here</string>

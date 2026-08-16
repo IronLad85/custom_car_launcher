@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.example.carheadunit.data.MediaActionType
 import com.example.carheadunit.ui.HomeScreen
 import com.example.carheadunit.ui.LauncherViewModel
 import com.example.carheadunit.ui.theme.CarHeadUnitTheme
@@ -19,8 +20,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: LauncherViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // Dark system bar icons over the dark gradient, regardless of the device's
+        super.onCreate(savedInstanceState)        // Dark system bar icons over the dark gradient, regardless of the device's
         // system theme; the OS status bar stays visible.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
                 val apps by viewModel.apps.collectAsState()
                 val pinnedSet by viewModel.pinned.collectAsState()
                 val drawerOpen by viewModel.drawerOpen.collectAsState()
+                val mediaAccess by viewModel.mediaAccess.collectAsState()
 
                 HomeScreen(
                     snapshot = snapshot,
@@ -48,11 +49,25 @@ class MainActivity : ComponentActivity() {
                     drawerOpen = drawerOpen,
                     onLaunch = viewModel::launchApp,
                     onTogglePin = viewModel::togglePin,
-                    onTogglePlayback = viewModel::togglePlayback,
+                    onTogglePlayback = { viewModel.mediaControl(MediaActionType.PLAY_PAUSE) },
+                    onNextTrack = { viewModel.mediaControl(MediaActionType.NEXT) },
+                    onPrevTrack = { viewModel.mediaControl(MediaActionType.PREV) },
+                    mediaAccess = mediaAccess,
+                    onRequestMediaAccess = viewModel::requestMediaAccess,
                     onOpenAllApps = viewModel::openDrawer,
                     onCloseDrawer = viewModel::closeDrawer,
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        viewModel.onForeground()
+    }
+
+    override fun onStop() {
+        viewModel.onBackground()
+        super.onStop()
     }
 }
