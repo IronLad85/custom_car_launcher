@@ -14,9 +14,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -39,6 +44,7 @@ import com.example.carheadunit.ui.theme.OnSurfaceVariant
 import com.example.carheadunit.ui.theme.OutlineVariant
 import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.PrimaryFixed
+import com.example.carheadunit.ui.theme.PrimaryFixedDim
 import com.example.carheadunit.ui.theme.SurfaceHighest
 
 /** Main speedometer tile: dot-grid decor, big km/h readout, speed/RPM bars, gear, car render. */
@@ -67,21 +73,21 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Left 40%: metrics column (compact on short tiles)
+                // Left 66%: metrics column with wide horizontal bars
                 BoxWithConstraints(
                     modifier = Modifier
-                        .weight(0.4f)
+                        .weight(0.66f)
                         .fillMaxHeight(),
                     contentAlignment = Alignment.Center,
                 ) {
                     val compact = maxHeight < 150.dp
                     // Readout scales with the tile: design 64px on tall screens
                     val readoutSize = when {
-                        compact -> 30
-                        maxHeight < 280.dp -> 48
-                        else -> 64
+                        compact -> 34
+                        maxHeight < 280.dp -> 54
+                        else -> 72
                     }
                     val readoutStyle = androidx.compose.material3.MaterialTheme.typography.displayLarge
                         .copy(
@@ -118,7 +124,7 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (compact) 10.dp else 18.dp)
+                                .height(if (compact) 16.dp else 26.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(SurfaceHighest)
                                 .border(1.dp, OutlineVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
@@ -167,7 +173,7 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (compact) 8.dp else 10.dp)
+                                .height(if (compact) 12.dp else 16.dp)
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(SurfaceHighest)
                                 .border(1.dp, OutlineVariant.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
@@ -204,47 +210,42 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                                 )
                             }
                         }
-                        Spacer(Modifier.height(if (compact) 0.dp else 10.dp))
-                        // Gear "D" with cyan glow (hidden in compact mode)
-                        if (!compact) {
-                            val gearStyle = androidx.compose.material3.MaterialTheme.typography.displayMedium
-                                .copy(fontSize = 20.sp, lineHeight = 24.sp)
-                            Box {
-                                Text(
-                                    text = "D",
-                                    style = gearStyle,
-                                    color = PrimaryContainer.copy(alpha = 0.6f),
-                                    modifier = Modifier.blur(5.dp),
-                                )
-                                Text(
-                                    text = "D",
-                                    style = gearStyle,
-                                    color = OnSurface,
-                                )
-                            }
-                        }
+                        // Gear mark removed to keep the speed card cleaner and shorter.
                     }
                 }
-                // Right 60%: vehicle visualization
+                // Right 33%: total miles card, keeping the bar area primary
                 Box(
                     modifier = Modifier
-                        .weight(0.6f)
+                        .weight(0.33f)
                         .fillMaxHeight(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        drawOval(
-                            color = Color.Black.copy(alpha = 0.35f),
-                            topLeft = Offset(size.width * 0.12f, size.height * 0.68f),
-                            size = Size(size.width * 0.76f, size.height * 0.16f),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_speed),
+                            contentDescription = null,
+                            tint = PrimaryFixedDim.copy(alpha = 0.8f),
+                            modifier = Modifier.size(26.dp),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "14,204",
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 17.sp, lineHeight = 20.sp),
+                            color = OnSurface,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "TOTAL MILES",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 12.sp),
+                            color = OnSurfaceVariant.copy(alpha = 0.5f),
                         )
                     }
-                    Image(
-                        painter = painterResource(R.drawable.car),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit,
-                    )
                 }
             }
         }

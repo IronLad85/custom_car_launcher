@@ -93,14 +93,14 @@ fun MediaTile(media: MediaInfo, onTogglePlayback: () -> Unit, modifier: Modifier
                         Spacer(Modifier.height(if (compactMedia) 2.dp else 4.dp))
                         Text(
                             text = media.trackTitle,
-                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, lineHeight = 20.sp),
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp, lineHeight = 30.sp),
                             color = OnSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
                             text = media.artist,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 19.5.sp, lineHeight = 27.sp),
                             color = OnSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,

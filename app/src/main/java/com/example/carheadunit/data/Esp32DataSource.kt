@@ -24,8 +24,6 @@ class Esp32DataSource : CarDataSource {
     @Volatile
     private var connected = false
 
-    private val fallback = MockCarDataSource()
-
     private val executor = Executors.newSingleThreadExecutor()
 
     init {
@@ -54,9 +52,14 @@ class Esp32DataSource : CarDataSource {
         }
     }
 
-    override fun snapshot(): CarSnapshot = if (connected) latest else fallback.snapshot()
+    override fun snapshot(): CarSnapshot = latest
 
-    override fun togglePlayback() = fallback.togglePlayback()
+    override fun togglePlayback() {
+        latest = latest.copy(
+            media = latest.media.copy(isPlaying = !latest.media.isPlaying),
+        )
+        connected = true
+    }
 
     private fun parse(json: String): CarSnapshot {
         val root = JSONObject(json)

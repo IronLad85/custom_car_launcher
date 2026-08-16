@@ -75,7 +75,7 @@ fun NavDock(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
+                .height(72.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceAround,
         ) {
@@ -109,7 +109,7 @@ private fun DockItem(
                 onClick = { onLaunch(app) },
                 onLongClick = { onUnpin(app.packageName) },
             )
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -117,14 +117,7 @@ private fun DockItem(
         Image(
             painter = BitmapPainter(bitmap.asImageBitmap()),
             contentDescription = app.label,
-            modifier = Modifier.size(22.dp),
-        )
-        Text(
-            text = app.label,
-            style = MaterialTheme.typography.labelSmall,
-            color = OnSurfaceVariant.copy(alpha = 0.5f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.size(40.dp),
         )
     }
 }
@@ -135,7 +128,7 @@ private fun AllAppsItem(active: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -143,12 +136,7 @@ private fun AllAppsItem(active: Boolean, onClick: () -> Unit) {
             painter = painterResource(R.drawable.ic_apps_grid),
             contentDescription = stringResource(R.string.all_apps_cd),
             tint = if (active) PrimaryContainer else OnSurfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.size(22.dp),
-        )
-        Text(
-            text = stringResource(R.string.all_apps),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (active) OnSurface else OnSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(40.dp),
         )
         if (active) {
             Box(

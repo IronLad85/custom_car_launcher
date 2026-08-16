@@ -80,12 +80,12 @@ fun NavTile(modifier: Modifier = Modifier) {
                     Column {
                         Text(
                             text = "Exit 42B",
-                            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 18.sp, lineHeight = 24.sp),
+                            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 27.sp, lineHeight = 36.sp),
                             color = OnSurface,
                         )
                         Text(
                             text = "I-95 Northbound",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 19.5.sp, lineHeight = 27.sp),
                             color = OnSurfaceVariant,
                         )
                     }
@@ -99,17 +99,17 @@ fun NavTile(modifier: Modifier = Modifier) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("ETA", style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = OnSurfaceVariant)
-                            Text("14:30", style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = OnSurface)
+                            Text("ETA", style = MaterialTheme.typography.bodySmall.copy(fontSize = 18.sp, lineHeight = 24.sp), color = OnSurfaceVariant)
+                            Text("14:30", style = MaterialTheme.typography.bodySmall.copy(fontSize = 18.sp, lineHeight = 24.sp), color = OnSurface)
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Dist", style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = OnSurfaceVariant)
-                            Text("12 mi", style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = OnSurface)
+                            Text("Dist", style = MaterialTheme.typography.bodySmall.copy(fontSize = 18.sp, lineHeight = 24.sp), color = OnSurfaceVariant)
+                            Text("12 mi", style = MaterialTheme.typography.bodySmall.copy(fontSize = 18.sp, lineHeight = 24.sp), color = OnSurface)
                         }
                     }
                 }

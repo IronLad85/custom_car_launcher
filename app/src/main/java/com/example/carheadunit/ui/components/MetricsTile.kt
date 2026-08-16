@@ -182,7 +182,7 @@ private fun OdometerSection() {
         )
         Text(
             text = "14,204",
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, lineHeight = 15.sp),
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 19.5.sp, lineHeight = 22.5.sp),
             color = OnSurface,
         )
         Text("TOTAL MILES", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant.copy(alpha = 0.5f))
@@ -235,7 +235,7 @@ private fun TempSection(snapshot: CarSnapshot) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = "$fahrenheit°",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 18.sp, lineHeight = 20.sp),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 27.sp, lineHeight = 30.sp),
                 color = PrimaryFixed,
             )
             Icon(

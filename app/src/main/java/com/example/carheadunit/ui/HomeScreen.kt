@@ -75,7 +75,7 @@ fun HomeScreen(
             )
         }
         if (drawerOpen) {
-            AllAppsScreen(
+                AllAppsScreen(
                 apps = apps,
                 pinned = pinnedSet,
                 onLaunch = onLaunch,
@@ -84,20 +84,20 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(bottom = 52.dp),
+                    .padding(bottom = 80.dp),
             )
         } else {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 52.dp),
+                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 80.dp),
             ) {
                 // Row 1: indicators + steering track
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(36.dp),
+                        .height(48.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     IndicatorBar(
@@ -112,13 +112,13 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 // Row 2: driving zones (columns flex; metrics/media cap at design sizes)
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     // Speed column (7/12)
                     Column(
@@ -129,17 +129,17 @@ fun HomeScreen(
                         SpeedoTile(
                             speed = snapshot.speed,
                             modifier = Modifier
-                                .weight(1.9f)
+                                .weight(1.06f)
                                 .fillMaxWidth()
-                                .heightIn(min = 120.dp),
+                                .heightIn(min = 66.dp),
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         MetricsTile(
                             snapshot = snapshot,
                             modifier = Modifier
-                                .weight(1f)
+                                .weight(0.765f)
                                 .fillMaxWidth()
-                                .heightIn(min = 72.dp, max = 160.dp),
+                                .heightIn(min = 55.dp, max = 122.dp),
                         )
                     }
                     // Navigation column (5/12)
@@ -150,18 +150,18 @@ fun HomeScreen(
                     ) {
                         NavTile(
                             modifier = Modifier
-                                .weight(1.55f)
+                                .weight(1.07f)
                                 .fillMaxWidth()
-                                .heightIn(min = 100.dp),
+                                .heightIn(min = 69.dp),
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         MediaTile(
                             media = snapshot.media,
                             onTogglePlayback = onTogglePlayback,
                             modifier = Modifier
-                                .weight(1f)
+                                .weight(0.765f)
                                 .fillMaxWidth()
-                                .heightIn(min = 96.dp, max = 192.dp),
+                                .heightIn(min = 73.dp, max = 147.dp),
                         )
                     }
                 }

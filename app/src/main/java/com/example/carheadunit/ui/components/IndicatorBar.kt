@@ -75,7 +75,7 @@ fun IndicatorBar(
                 painter = painterResource(R.drawable.ic_stop_circle),
                 contentDescription = null,
                 tint = White20,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(32.dp),
             )
         }
     }
@@ -91,21 +91,21 @@ private fun GlowIcon(painter: Painter, tint: Color, lit: Boolean) {
                 contentDescription = null,
                 tint = tint.copy(alpha = 0.7f),
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(32.dp)
                     .blur(5.dp),
             )
             Icon(
                 painter = painter,
                 contentDescription = null,
                 tint = tint,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(32.dp),
             )
         } else {
             Icon(
                 painter = painter,
                 contentDescription = null,
                 tint = White20,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(32.dp),
             )
         }
     }

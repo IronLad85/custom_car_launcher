@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -96,10 +96,11 @@ fun AllAppsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(apps, key = { it.packageName }) { app ->
+            itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
                 AppTile(
                     app = app,
                     isPinned = app.packageName in pinned,
+                    rowIndex = index / 6,
                     onLaunch = { onLaunch(app) },
                     onTogglePin = { onTogglePin(app.packageName) },
                 )
@@ -113,9 +114,16 @@ fun AllAppsScreen(
 private fun AppTile(
     app: AppEntry,
     isPinned: Boolean,
+    rowIndex: Int,
     onLaunch: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
+    val iconSize = when (rowIndex) {
+        2 -> 40.dp
+        3 -> 58.dp
+        else -> 48.dp
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -127,16 +135,16 @@ private fun AppTile(
                 shape = RoundedCornerShape(14.dp),
             )
             .combinedClickable(onClick = onLaunch, onLongClick = onTogglePin)
-            .padding(vertical = 16.dp, horizontal = 8.dp),
+            .padding(vertical = if (rowIndex == 2) 12.dp else 16.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val bitmap = remember(app.packageName) { app.icon.toBitmap() }
         Image(
             painter = BitmapPainter(bitmap.asImageBitmap()),
             contentDescription = app.label,
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(iconSize),
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (rowIndex == 3) 10.dp else 8.dp))
         Text(
             text = app.label,
             style = MaterialTheme.typography.labelMedium,
