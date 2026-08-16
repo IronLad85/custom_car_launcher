@@ -33,6 +33,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.example.carheadunit.R
 import com.example.carheadunit.data.CarSnapshot
 import com.example.carheadunit.ui.theme.ErrorRed
@@ -58,7 +59,7 @@ fun MetricsTile(snapshot: CarSnapshot, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            PowerSection()
+            PowerSection(snapshot.power)
             Divider()
             OdometerSection()
             Divider()
@@ -80,17 +81,17 @@ private fun Divider() {
     )
 }
 
-/** POWER gauge block (range removed). */
+/** POWER gauge block (range removed). Value derived live: throttle × rpm/redline. */
 @Composable
-private fun PowerSection() {
+private fun PowerSection(power: Float) {
     BoxWithConstraints {
         val gaugeSize = (maxHeight - 28.dp).coerceIn(52.dp, 84.dp)
-        PowerGauge(gaugeSize)
+        PowerGauge(gaugeSize, power.coerceIn(0f, 1f))
     }
 }
 
 @Composable
-private fun PowerGauge(gaugeSize: Dp) {
+private fun PowerGauge(gaugeSize: Dp, power: Float) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
         Box(Modifier.size(gaugeSize), contentAlignment = Alignment.Center) {
@@ -105,24 +106,24 @@ private fun PowerGauge(gaugeSize: Dp) {
                 drawArc(
                     PrimaryContainer.copy(alpha = 0.25f),
                     270f,
-                    360f * 0.42f,
+                    360f * power,
                     false,
                     topLeft,
                     arcSize,
                     style = Stroke(stroke * 2f),
                 )
-                // Value: 42% sweep from 12 o'clock
+                // Value sweep from 12 o'clock
                 drawArc(
                     PrimaryContainer,
                     270f,
-                    360f * 0.42f - 4f,
+                    (360f * power - 4f).coerceAtLeast(0f),
                     false,
                     topLeft,
                     arcSize,
                     style = Stroke(stroke, cap = StrokeCap.Round),
                 )
             }
-            Text("42%", style = MaterialTheme.typography.bodySmall, color = Primary)
+            Text("${(power * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall, color = Primary)
         }
     }
 }

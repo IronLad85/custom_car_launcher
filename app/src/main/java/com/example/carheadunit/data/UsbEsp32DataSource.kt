@@ -259,8 +259,16 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun buildSnapshot(values: Map<String, Float>): CarSnapshot {
         fun v(name: String, default: Float = 0f) = values[name] ?: default
         fun lit(name: String) = v(name) >= 0.5f
+        // Derived power: P ≈ torque × rpm, torque ≈ throttle (first-order).
+        // Accepts both normalized (0..1) and real units (% / RPM) from the firmware.
+        val throttle = v("THROTTLE")
+        val rpm = v("ENGINE_RPM")
+        val throttleFrac = (if (throttle > 1f) throttle / 100f else throttle).coerceIn(0f, 1f)
+        val rpmFrac = (if (rpm > 1f) rpm / 8000f else rpm).coerceIn(0f, 1f)
+        val power = if (v("BRAKE_PRESSURE") > 0.5f) 0f else (throttleFrac * rpmFrac).coerceIn(0f, 1f)
         return CarSnapshot(
             speed = SpeedInfo(kmh = v("SPEED").roundToInt()),
+            power = power,
             climate = ClimateInfo(tempC = v("COOLANT_TEMP").roundToInt(), fanLevel = 4),
             steeringFraction = ((v("LW1_STEERING_ANGLE") / 45f).coerceIn(-1f, 1f) + 1f) / 2f,
             highBeam = lit("HIGH_BEAM"),

@@ -76,8 +76,17 @@ class Esp32DataSource : CarDataSource {
 
         fun lit(name: String): Boolean = value(name) >= 0.5
 
+        // Derived power: P ≈ torque × rpm, torque ≈ throttle (first-order).
+        // Accepts both normalized (0..1) and real units (% / RPM) from the firmware.
+        val throttle = value("THROTTLE")
+        val rpm = value("ENGINE_RPM")
+        val throttleFrac = (if (throttle > 1.0) throttle / 100.0 else throttle).coerceIn(0.0, 1.0)
+        val rpmFrac = (if (rpm > 1.0) rpm / 8000.0 else rpm).coerceIn(0.0, 1.0)
+        val power = if (value("BRAKE_PRESSURE") > 0.5) 0.0 else (throttleFrac * rpmFrac).coerceIn(0.0, 1.0)
+
         return CarSnapshot(
             speed = SpeedInfo(kmh = (value("SPEED") * 180.0).roundToInt()),
+            power = power.toFloat(),
             climate = ClimateInfo(
                 tempC = (value("COOLANT_TEMP") * 100.0).roundToInt(),
                 fanLevel = 4,

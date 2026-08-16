@@ -19,6 +19,7 @@ data class CarSnapshot(
     val climate: ClimateInfo = ClimateInfo(tempC = 22, fanLevel = 4),
     val media: MediaInfo = MediaInfo(trackTitle = "Midnight Drive", artist = "Neon Skyline", isPlaying = true),
     // ESP32 telemetry (defaults keep the design's static look when offline)
+    val power: Float = 0.42f,              // 0..1 derived: throttle × rpm/redline
     val steeringFraction: Float = 0.65f,   // 0..1 across the steering track
     val highBeam: Boolean = false,
     val turnLeftLamp: Boolean = false,
