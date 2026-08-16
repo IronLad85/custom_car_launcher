@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">Car Head Unit</string>
+
+    <string name="speed_label">Speed</string>
+    <string name="speed_unit">km/h</string>
+    <string name="climate_label">Climate</string>
+    <string name="fan_level">Fan level</string>
+    <string name="media_label">Now Playing</string>
+
+    <string name="all_apps">Apps</string>
+    <string name="all_apps_title">All Apps</string>
+    <string name="all_apps_cd">All apps</string>
+    <string name="dock_empty_hint">Long-press an app in the grid to pin it here</string>
+    <string name="cd_play">Play</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_close">Close</string>
+    <string name="pinned_to_dock">Pinned to dock</string>
+    <string name="unpinned_from_dock">Unpinned from dock</string>
+</resources>
