@@ -41,7 +41,7 @@ import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.PrimaryFixed
 import com.example.carheadunit.ui.theme.SurfaceHighest
 
-/** Main speedometer tile: dot-grid decor, big MPH readout, speed/RPM bars, gear, car render. */
+/** Main speedometer tile: dot-grid decor, big km/h readout, speed/RPM bars, gear, car render. */
 @Composable
 fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
     val kmh = speed.kmh
@@ -69,7 +69,7 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                     .padding(20.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                // Left 40%: metrics column (compact on short tiles: readout + bar only)
+                // Left 40%: metrics column (compact on short tiles)
                 BoxWithConstraints(
                     modifier = Modifier
                         .weight(0.4f)
@@ -90,139 +90,139 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                             letterSpacing = (-2).sp,
                         )
                     Column(verticalArrangement = Arrangement.Center) {
-                    // Speed readout with cyan glow
-                    Box {
-                        Text(
-                            text = "$kmh",
-                            style = readoutStyle,
-                            color = PrimaryContainer.copy(alpha = 0.55f),
-                            modifier = Modifier.blur(6.dp),
-                        )
-                        Row(verticalAlignment = Alignment.Bottom) {
+                        // Speed readout with cyan glow
+                        Box {
                             Text(
                                 text = "$kmh",
                                 style = readoutStyle,
-                                color = OnSurface,
+                                color = PrimaryContainer.copy(alpha = 0.55f),
+                                modifier = Modifier.blur(6.dp),
                             )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "km/h",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-                                color = PrimaryFixed.copy(alpha = 0.9f),
-                                modifier = Modifier.padding(bottom = 10.dp),
-                            )
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = "$kmh",
+                                    style = readoutStyle,
+                                    color = OnSurface,
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "km/h",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                                    color = PrimaryFixed.copy(alpha = 0.9f),
+                                    modifier = Modifier.padding(bottom = 10.dp),
+                                )
+                            }
                         }
-                    }
-                    Spacer(Modifier.height(if (compact) 4.dp else 8.dp))
-                    // Speed bar: 65% cyan fill, white right-edge marker
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(if (compact) 10.dp else 18.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(SurfaceHighest)
-                            .border(1.dp, OutlineVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
-                    ) {
+                        Spacer(Modifier.height(if (compact) 4.dp else 8.dp))
+                        // Speed bar: cyan fill, white right-edge marker
                         Box(
                             modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(speedFrac)
-                                .background(
-                                    Brush.horizontalGradient(
-                                        listOf(PrimaryContainer.copy(alpha = 0.6f), PrimaryContainer),
-                                    )
-                                ),
+                                .fillMaxWidth()
+                                .height(if (compact) 10.dp else 18.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SurfaceHighest)
+                                .border(1.dp, OutlineVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .width(3.dp)
                                     .fillMaxHeight()
-                                    .background(Color.White.copy(alpha = 0.7f)),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(if (compact) 4.dp else 12.dp))
-                    // RPM label + value (hidden in compact mode)
-                    if (!compact) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Bottom,
-                    ) {
-                        Text(
-                            text = "RPM x 1000",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = OnSurfaceVariant.copy(alpha = 0.8f),
-                        )
-                        Text(
-                            text = String.format(java.util.Locale.US, "%.1f", rpm),
-                            style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
-                            color = OnSurface,
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    }
-                    // RPM bar: 40% cyan fill + red zone on the right 20%
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(if (compact) 8.dp else 10.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(SurfaceHighest)
-                            .border(1.dp, OutlineVariant.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
-                    ) {
-                        Row(Modifier.fillMaxSize()) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(0.4f)
-                                    .fillMaxHeight()
+                                    .fillMaxWidth(speedFrac)
                                     .background(
                                         Brush.horizontalGradient(
-                                            listOf(PrimaryContainer.copy(alpha = 0.4f), PrimaryContainer),
+                                            listOf(PrimaryContainer.copy(alpha = 0.6f), PrimaryContainer),
                                         )
                                     ),
                             ) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.CenterEnd)
-                                        .width(2.dp)
+                                        .width(3.dp)
                                         .fillMaxHeight()
-                                        .background(Color.White.copy(alpha = 0.5f)),
+                                        .background(Color.White.copy(alpha = 0.7f)),
                                 )
                             }
-                            Spacer(Modifier.weight(0.4f))
-                            Box(
-                                modifier = Modifier
-                                    .weight(0.2f)
-                                    .fillMaxHeight()
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(ErrorRed.copy(alpha = 0f), ErrorRed.copy(alpha = 0.6f)),
-                                        )
-                                    ),
-                            )
                         }
-                    }
-                    Spacer(Modifier.height(if (compact) 0.dp else 10.dp))
-                    // Gear "D" with cyan glow (hidden in compact mode)
-                    if (!compact) {
-                    val gearStyle = androidx.compose.material3.MaterialTheme.typography.displayMedium
-                        .copy(fontSize = 20.sp, lineHeight = 24.sp)
-                    Box {
-                        Text(
-                            text = "D",
-                            style = gearStyle,
-                            color = PrimaryContainer.copy(alpha = 0.6f),
-                            modifier = Modifier.blur(5.dp),
-                        )
-                        Text(
-                            text = "D",
-                            style = gearStyle,
-                            color = OnSurface,
-                        )
-                    }
-                    }
+                        Spacer(Modifier.height(if (compact) 4.dp else 12.dp))
+                        // RPM label + value (hidden in compact mode)
+                        if (!compact) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom,
+                            ) {
+                                Text(
+                                    text = "RPM x 1000",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = OnSurfaceVariant.copy(alpha = 0.8f),
+                                )
+                                Text(
+                                    text = String.format(java.util.Locale.US, "%.1f", rpm),
+                                    style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
+                                    color = OnSurface,
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        // RPM bar: 40% cyan fill + red zone on the right 20%
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(if (compact) 8.dp else 10.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(SurfaceHighest)
+                                .border(1.dp, OutlineVariant.copy(alpha = 0.3f), RoundedCornerShape(4.dp)),
+                        ) {
+                            Row(Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(0.4f)
+                                        .fillMaxHeight()
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                listOf(PrimaryContainer.copy(alpha = 0.4f), PrimaryContainer),
+                                            )
+                                        ),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .width(2.dp)
+                                            .fillMaxHeight()
+                                            .background(Color.White.copy(alpha = 0.5f)),
+                                    )
+                                }
+                                Spacer(Modifier.weight(0.4f))
+                                Box(
+                                    modifier = Modifier
+                                        .weight(0.2f)
+                                        .fillMaxHeight()
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                listOf(ErrorRed.copy(alpha = 0f), ErrorRed.copy(alpha = 0.6f)),
+                                            )
+                                        ),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(if (compact) 0.dp else 10.dp))
+                        // Gear "D" with cyan glow (hidden in compact mode)
+                        if (!compact) {
+                            val gearStyle = androidx.compose.material3.MaterialTheme.typography.displayMedium
+                                .copy(fontSize = 20.sp, lineHeight = 24.sp)
+                            Box {
+                                Text(
+                                    text = "D",
+                                    style = gearStyle,
+                                    color = PrimaryContainer.copy(alpha = 0.6f),
+                                    modifier = Modifier.blur(5.dp),
+                                )
+                                Text(
+                                    text = "D",
+                                    style = gearStyle,
+                                    color = OnSurface,
+                                )
+                            }
+                        }
                     }
                 }
                 // Right 60%: vehicle visualization

@@ -23,17 +23,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.carheadunit.R
 import com.example.carheadunit.data.CarSnapshot
+import com.example.carheadunit.ui.theme.ErrorRed
 import com.example.carheadunit.ui.theme.OnSurface
 import com.example.carheadunit.ui.theme.OnSurfaceVariant
 import com.example.carheadunit.ui.theme.OutlineVariant
@@ -190,31 +191,41 @@ private fun OdometerSection() {
 
 @Composable
 private fun ThrottleSection() {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val segments = 12
+    val litCount = 2 // 15% of 12
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("THROTTLE", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.height(40.dp),
+        Column(
+            modifier = Modifier
+                .height(40.dp)
+                .width(8.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
-            repeat(5) { i ->
+            repeat(segments) { i ->
+                // level 0 at the bottom, rising toward the top
+                val level = segments - 1 - i
+                val heat = heatColor(level / (segments - 1f))
+                val lit = level < litCount
                 Box(
                     modifier = Modifier
-                        .width(6.dp)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            when (i) {
-                                0 -> PrimaryContainer.copy(alpha = 0.6f)
-                                1 -> PrimaryContainer.copy(alpha = 0.4f)
-                                else -> SurfaceHighest
-                            }
-                        ),
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(if (lit) heat else heat.copy(alpha = 0.22f)),
                 )
             }
         }
         Text("15%", style = MaterialTheme.typography.bodySmall, color = Primary)
     }
 }
+
+/** Blue → amber → red heat ramp, rising with the level. */
+private fun heatColor(t: Float): Color =
+    if (t < 0.5f) {
+        lerp(PrimaryContainer, Color(0xFFFFC84A), t * 2f)
+    } else {
+        lerp(Color(0xFFFFC84A), ErrorRed, (t - 0.5f) * 2f)
+    }
 
 @Composable
 private fun TempSection(snapshot: CarSnapshot) {
