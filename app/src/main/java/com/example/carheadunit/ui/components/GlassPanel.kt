@@ -13,12 +13,12 @@ import androidx.compose.ui.unit.dp
 import com.example.carheadunit.ui.theme.GlassBorder
 import com.example.carheadunit.ui.theme.GlassFill
 
-/** White translucent "glass" container used by the data cards, dock, and app tiles. */
+/** Glass panel per the design tokens: rgba(28,31,38,0.8) fill, 1px outline-variant border, 12dp corners. */
 @Composable
-fun GlassCard(
+fun GlassPanel(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 16.dp,
-    contentPadding: Dp = 20.dp,
+    cornerRadius: Dp = 12.dp,
+    contentPadding: Dp = 0.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(

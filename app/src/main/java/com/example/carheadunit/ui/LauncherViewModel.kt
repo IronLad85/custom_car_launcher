@@ -12,7 +12,7 @@ import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.AppsRepository
 import com.example.carheadunit.data.CarDataSource
 import com.example.carheadunit.data.CarSnapshot
-import com.example.carheadunit.data.MockCarDataSource
+import com.example.carheadunit.data.Esp32DataSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +23,8 @@ import kotlinx.coroutines.launch
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appsRepository = AppsRepository(application)
-    private val dataSource: CarDataSource = MockCarDataSource()
+    // Live ESP32 telemetry via the Mac-side bridge; falls back to mock when unreachable.
+    private val dataSource: CarDataSource = Esp32DataSource()
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 

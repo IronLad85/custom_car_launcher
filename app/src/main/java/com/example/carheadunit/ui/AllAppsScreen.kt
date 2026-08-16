@@ -42,11 +42,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.example.carheadunit.R
 import com.example.carheadunit.data.AppEntry
-import com.example.carheadunit.ui.theme.AccentViolet
 import com.example.carheadunit.ui.theme.GlassBorder
 import com.example.carheadunit.ui.theme.GlassFill
-import com.example.carheadunit.ui.theme.TextPrimary
-import com.example.carheadunit.ui.theme.TextSecondary
+import com.example.carheadunit.ui.theme.OnSurface
+import com.example.carheadunit.ui.theme.PrimaryContainer
 
 /**
  * Full-screen drawer listing every installed app in glass tiles.
@@ -80,14 +79,14 @@ fun AllAppsScreen(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.cd_close),
-                    tint = TextPrimary,
+                    tint = OnSurface,
                 )
             }
             Spacer(Modifier.width(16.dp))
             Text(
                 text = stringResource(R.string.all_apps_title),
                 style = MaterialTheme.typography.headlineMedium,
-                color = TextPrimary,
+                color = OnSurface,
             )
         }
         LazyVerticalGrid(
@@ -124,7 +123,7 @@ private fun AppTile(
             .background(GlassFill)
             .border(
                 width = 1.dp,
-                color = if (isPinned) AccentViolet.copy(alpha = 0.6f) else GlassBorder,
+                color = if (isPinned) PrimaryContainer.copy(alpha = 0.6f) else GlassBorder,
                 shape = RoundedCornerShape(14.dp),
             )
             .combinedClickable(onClick = onLaunch, onLongClick = onTogglePin)
@@ -141,7 +140,7 @@ private fun AppTile(
         Text(
             text = app.label,
             style = MaterialTheme.typography.labelMedium,
-            color = TextPrimary,
+            color = OnSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
@@ -151,7 +150,7 @@ private fun AppTile(
             Box(
                 modifier = Modifier
                     .size(6.dp)
-                    .background(AccentViolet, CircleShape),
+                    .background(PrimaryContainer, CircleShape),
             )
         }
     }
