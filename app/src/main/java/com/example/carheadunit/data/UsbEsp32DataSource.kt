@@ -12,6 +12,8 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Log
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 /**
@@ -22,6 +24,10 @@ import kotlin.math.roundToInt
  *
  * Falls back to the HTTP bridge source (emulator dev) and then the mock
  * simulator when no USB device is attached.
+ *
+ * Reconnect policy: failed opens (and device scans while absent) retry with
+ * exponential delays starting at 10s, capped at 60s, up to 5 attempts per
+ * episode; attach/permission events and successful opens reset the episode.
  */
 class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
@@ -44,6 +50,11 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var outEp: UsbEndpoint? = null
 
     private val executor = Executors.newSingleThreadExecutor()
+    private val retryExecutor = Executors.newSingleThreadScheduledExecutor()
+
+    // Reconnect episode state (guarded by scheduleReconnect/resetRetry)
+    private var retryAttempt = 0
+    private var retryTask: ScheduledFuture<*>? = null
 
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -54,15 +65,24 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 ACTION_USB_PERMISSION -> {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     Log.i(TAG, "USB permission granted=$granted")
-                    if (granted) connect()
+                    if (granted) {
+                        resetRetry()
+                        connect()
+                    } else {
+                        Log.w(TAG, "USB permission denied — retries stopped")
+                        resetRetry()
+                    }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     Log.i(TAG, "USB device attached")
+                    resetRetry()
                     connect()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     Log.i(TAG, "USB device detached")
                     disconnect()
+                    resetRetry()
+                    scheduleReconnect()
                 }
             }
         }
@@ -99,6 +119,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     fun close() {
         disconnect()
         runCatching { context.unregisterReceiver(receiver) }
+        retryExecutor.shutdownNow()
     }
 
     // ---- CarDataSource ----
@@ -130,6 +151,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             it.vendorId == VID && it.productId == PID
         } ?: run {
             Log.d(TAG, "No CAN Sniffer device present")
+            scheduleReconnect()
             return
         }
         if (!usbManager.hasPermission(dev)) {
@@ -159,12 +181,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             connection = conn
             device = dev
             connected = true
+            resetRetry()
             Log.i(TAG, "USB connected: ${dev.deviceName}")
             writeCommand(CMD_START) // -> device answers 0xA1 + registry + snapshot + stream
             runReader()
         } catch (e: Exception) {
             Log.w(TAG, "USB open failed", e)
             disconnect()
+            scheduleReconnect()
         }
     }
 
@@ -207,6 +231,36 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         val conn = connection ?: return
         val ep = outEp ?: return
         conn.bulkTransfer(ep, byteArrayOf(cmd.toByte()), 1, 100)
+    }
+
+    // ---- reconnect ----
+
+    /**
+     * Schedules the next reconnect attempt with exponential delays: starts at
+     * RETRY_BASE_DELAY_MS and doubles per failure, capped at RETRY_MAX_DELAY_MS,
+     * at most MAX_RETRY_ATTEMPTS per episode. Any attach/permission event or a
+     * successful open resets the episode.
+     */
+    private fun scheduleReconnect() {
+        synchronized(this) {
+            retryTask?.cancel(false)
+            if (retryAttempt >= MAX_RETRY_ATTEMPTS) {
+                Log.i(TAG, "USB reconnect gave up after $MAX_RETRY_ATTEMPTS attempts")
+                return
+            }
+            val delay = minOf(RETRY_BASE_DELAY_MS * (1L shl retryAttempt), RETRY_MAX_DELAY_MS)
+            retryAttempt++
+            Log.i(TAG, "USB reconnect attempt $retryAttempt/$MAX_RETRY_ATTEMPTS in ${delay / 1000}s")
+            retryTask = retryExecutor.schedule({ connect() }, delay, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun resetRetry() {
+        synchronized(this) {
+            retryTask?.cancel(false)
+            retryTask = null
+            retryAttempt = 0
+        }
     }
 
     // ---- protocol handling ----
@@ -295,5 +349,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val PID = 0x4000
         const val CMD_START = 0x53  // 'S'
         const val CMD_PAUSE = 0x50  // 'P'
+        const val MAX_RETRY_ATTEMPTS = 5
+        const val RETRY_BASE_DELAY_MS = 10_000L
+        const val RETRY_MAX_DELAY_MS = 60_000L
     }
 }
