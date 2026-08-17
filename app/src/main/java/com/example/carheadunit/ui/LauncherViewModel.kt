@@ -31,7 +31,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private val appsRepository = AppsRepository(application)
     // USB CAN Sniffer when attached; HTTP bridge (emulator dev) then mock as fallbacks.
-    private val dataSource: CarDataSource = UsbEsp32DataSource(application)
+    private val usbSource = UsbEsp32DataSource(application)
+    private val dataSource: CarDataSource = usbSource
+
+    /** USB link health for the dock status chip. */
+    val usbStatus = usbSource.status
 
     private val telemetryLogger = TelemetryLogger(application)
 
@@ -98,19 +102,19 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         getApplication<Application>().unregisterReceiver(packageReceiver)
-        (dataSource as? UsbEsp32DataSource)?.close()
+        usbSource.close()
         telemetryLogger.close()
         super.onCleared()
     }
 
     /** USB stream pauses while the app is backgrounded (0x50). */
     fun onBackground() {
-        (dataSource as? UsbEsp32DataSource)?.pause()
+        usbSource.pause()
     }
 
     /** USB stream resumes on foreground (0x53, snapshot refresh). */
     fun onForeground() {
-        (dataSource as? UsbEsp32DataSource)?.resume()
+        usbSource.resume()
         // The user may have just granted notification access in Settings
         refreshMediaAccess()
     }

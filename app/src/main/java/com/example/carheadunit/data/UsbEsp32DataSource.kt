@@ -15,6 +15,20 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/** USB link health shown in the dock status chip. */
+enum class UsbLinkState(val label: String) {
+    OFFLINE("ESP32 offline"),
+    RETRYING("ESP32 retrying…"),
+    CONNECTING("ESP32 connecting…"),
+    CONNECTED("ESP32 connected"),
+    STREAMING("ESP32 streaming"),
+    DATA("ESP32 live"),
+    FAILED("ESP32 failed"),
+}
 
 /**
  * Live telemetry from the CAN Sniffer (ESP32-S3) over USB CDC-ACM.
@@ -56,6 +70,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var retryAttempt = 0
     private var retryTask: ScheduledFuture<*>? = null
 
+    // Link health for the dock status chip
+    private val _status = MutableStateFlow(UsbLinkState.OFFLINE)
+    val status: StateFlow<UsbLinkState> = _status.asStateFlow()
+
+    // One-shot flags gating status progression (reset on disconnect)
+    private var registrySeen = false
+    private var dataSeen = false
+
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -66,15 +88,18 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     Log.i(TAG, "USB permission granted=$granted")
                     if (granted) {
+                        _status.value = UsbLinkState.CONNECTING
                         resetRetry()
                         connect()
                     } else {
                         Log.w(TAG, "USB permission denied — retries stopped")
+                        _status.value = UsbLinkState.FAILED
                         resetRetry()
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     Log.i(TAG, "USB device attached")
+                    _status.value = UsbLinkState.CONNECTING
                     resetRetry()
                     connect()
                 }
@@ -182,6 +207,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             device = dev
             connected = true
             resetRetry()
+            _status.value = UsbLinkState.CONNECTED
             Log.i(TAG, "USB connected: ${dev.deviceName}")
             writeCommand(CMD_START) // -> device answers 0xA1 + registry + snapshot + stream
             runReader()
@@ -220,8 +246,13 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         device = null
         inEp = null
         outEp = null
-        if (connected) Log.i(TAG, "USB disconnected")
+        if (connected) {
+            Log.i(TAG, "USB disconnected")
+        }
         connected = false
+        _status.value = UsbLinkState.OFFLINE
+        registrySeen = false
+        dataSeen = false
         parser.reset()
         signalMeta.clear()
         synchronized(signalValues) { signalValues.clear() }
@@ -246,8 +277,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             retryTask?.cancel(false)
             if (retryAttempt >= MAX_RETRY_ATTEMPTS) {
                 Log.i(TAG, "USB reconnect gave up after $MAX_RETRY_ATTEMPTS attempts")
+                _status.value = UsbLinkState.FAILED
                 return
             }
+            if (retryAttempt == 0) _status.value = UsbLinkState.RETRYING
             val delay = minOf(RETRY_BASE_DELAY_MS * (1L shl retryAttempt), RETRY_MAX_DELAY_MS)
             retryAttempt++
             Log.i(TAG, "USB reconnect attempt $retryAttempt/$MAX_RETRY_ATTEMPTS in ${delay / 1000}s")
@@ -268,8 +301,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun handleItem(item: Any) {
         when (item) {
             is Long -> when (item.toInt()) {
-                0xA1 -> Log.i(TAG, "ACK: stream started")
-                0xA0 -> Log.i(TAG, "ACK: stream paused")
+                0xA1 -> {
+                    Log.i(TAG, "ACK: stream started")
+                    _status.value = UsbLinkState.STREAMING
+                }
+                0xA0 -> {
+                    Log.i(TAG, "ACK: stream paused")
+                    _status.value = UsbLinkState.CONNECTED
+                }
             }
             is Map<*, *> -> {
                 @Suppress("UNCHECKED_CAST")
@@ -292,6 +331,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             offset = (m[7] as? Number)?.toFloat() ?: 0f,
         )
         registryCount++
+        if (!registrySeen) {
+            registrySeen = true
+            _status.value = UsbLinkState.STREAMING
+        }
         if (registryCount % 32 == 0) {
             Log.i(TAG, "Registry complete: $registryCount signals")
         }
@@ -299,6 +342,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
     private fun updateSignals(m: Map<Any, Any>) {
         val pairs = m[2] as? List<*> ?: return
+        if (!dataSeen) {
+            dataSeen = true
+            _status.value = UsbLinkState.DATA
+        }
         synchronized(signalValues) {
             for (p in pairs) {
                 val pair = p as? List<*> ?: continue

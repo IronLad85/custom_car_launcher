@@ -41,12 +41,14 @@ class MainActivity : ComponentActivity() {
                 val pinnedSet by viewModel.pinned.collectAsState()
                 val drawerOpen by viewModel.drawerOpen.collectAsState()
                 val mediaAccess by viewModel.mediaAccess.collectAsState()
+                val usbStatus by viewModel.usbStatus.collectAsState()
 
                 HomeScreen(
                     snapshot = snapshot,
                     apps = apps,
                     pinnedSet = pinnedSet,
                     drawerOpen = drawerOpen,
+                    usbStatus = usbStatus,
                     onLaunch = viewModel::launchApp,
                     onTogglePin = viewModel::togglePin,
                     onTogglePlayback = { viewModel.mediaControl(MediaActionType.PLAY_PAUSE) },

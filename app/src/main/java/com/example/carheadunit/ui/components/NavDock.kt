@@ -28,12 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.carheadunit.R
 import com.example.carheadunit.data.AppEntry
+import com.example.carheadunit.data.UsbLinkState
 import com.example.carheadunit.ui.theme.OnSurface
 import com.example.carheadunit.ui.theme.OnSurfaceVariant
 import com.example.carheadunit.ui.theme.PrimaryContainer
@@ -52,6 +54,7 @@ private const val MAX_DOCK_ITEMS = 8
 fun NavDock(
     pinned: List<AppEntry>,
     drawerOpen: Boolean,
+    usbStatus: UsbLinkState,
     onLaunch: (AppEntry) -> Unit,
     onUnpin: (String) -> Unit,
     onOpenAllApps: () -> Unit,
@@ -69,26 +72,71 @@ fun NavDock(
                 .height(1.dp)
                 .background(TopBorderWhite10),
         )
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(66.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceAround,
         ) {
-            if (pinned.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.dock_empty_hint),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = OnSurfaceVariant,
-                )
-            } else {
-                pinned.take(MAX_DOCK_ITEMS).forEach { app ->
-                    DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.Center),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceAround,
+            ) {
+                if (pinned.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.dock_empty_hint),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = OnSurfaceVariant,
+                    )
+                } else {
+                    pinned.take(MAX_DOCK_ITEMS).forEach { app ->
+                        DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+                    }
                 }
+                AllAppsItem(active = drawerOpen, onClick = onOpenAllApps)
             }
-            AllAppsItem(active = drawerOpen, onClick = onOpenAllApps)
+            UsbStatusChip(
+                state = usbStatus,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp),
+            )
         }
+    }
+}
+
+/** Compact USB link status: colored dot + label, at the left end of the dock. */
+@Composable
+private fun UsbStatusChip(state: UsbLinkState, modifier: Modifier = Modifier) {
+    val dotColor = when (state) {
+        UsbLinkState.DATA -> Color(0xFF4ADE80) // green — telemetry flowing
+        UsbLinkState.STREAMING, UsbLinkState.CONNECTED -> PrimaryContainer // cyan
+        UsbLinkState.RETRYING, UsbLinkState.CONNECTING -> Color(0xFFFBBF24) // amber
+        UsbLinkState.FAILED -> Color(0xFFF87171) // red
+        UsbLinkState.OFFLINE -> OnSurfaceVariant.copy(alpha = 0.45f) // gray
+    }
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(OnSurfaceVariant.copy(alpha = 0.10f))
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .background(dotColor, CircleShape),
+        )
+        Text(
+            text = state.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = OnSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

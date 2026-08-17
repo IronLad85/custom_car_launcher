@@ -22,6 +22,9 @@ android {
 
     buildTypes {
         release {
+            // Personal-use shortcut: sign release with the debug keystore.
+            // Not for Play Store distribution — updates must share a key.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

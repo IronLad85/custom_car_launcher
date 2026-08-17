@@ -28,6 +28,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.CarSnapshot
+import com.example.carheadunit.data.UsbLinkState
 import com.example.carheadunit.ui.components.IndicatorBar
 import com.example.carheadunit.ui.components.MediaTile
 import com.example.carheadunit.ui.components.MetricsTile
@@ -51,6 +52,7 @@ fun HomeScreen(
     apps: List<AppEntry>,
     pinnedSet: Set<String>,
     drawerOpen: Boolean,
+    usbStatus: UsbLinkState,
     onLaunch: (AppEntry) -> Unit,
     onTogglePin: (String) -> Unit,
     onTogglePlayback: () -> Unit,
@@ -188,6 +190,7 @@ fun HomeScreen(
         NavDock(
             pinned = pinnedApps,
             drawerOpen = drawerOpen,
+            usbStatus = usbStatus,
             onLaunch = onLaunch,
             onUnpin = onTogglePin,
             onOpenAllApps = onOpenAllApps,
@@ -205,6 +208,7 @@ private fun HomeScreenPreview() {
             apps = emptyList(),
             pinnedSet = emptySet(),
             drawerOpen = false,
+            usbStatus = UsbLinkState.OFFLINE,
             onLaunch = {},
             onTogglePin = {},
             onTogglePlayback = {},
