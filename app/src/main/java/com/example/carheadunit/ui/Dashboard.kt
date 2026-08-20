@@ -62,6 +62,7 @@ fun Dashboard(
             IndicatorBar(
                 turnLeft = snapshot.turnLeftLamp,
                 turnRight = snapshot.turnRightLamp,
+                hazard = snapshot.hazardMode,
                 fog = snapshot.fogLight,
                 charge = snapshot.chargeWarning,
                 highBeam = snapshot.highBeam,

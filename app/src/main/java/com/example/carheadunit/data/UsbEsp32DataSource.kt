@@ -678,6 +678,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             highBeam = lit("HIGH_BEAM"),
             turnLeftLamp = lit("TURN_LEFT_LAMP"),
             turnRightLamp = lit("TURN_RIGHT_LAMP"),
+            hazardMode = lit("HAZARD_MODE"),
             fogLight = lit("FOG_LIGHT"),
             chargeWarning = lit("CHARGE_WARNING"),
             fuelLevel = v("FUEL_LEVEL"), // litres (0..126, 1 L resolution) — keep raw for analysis

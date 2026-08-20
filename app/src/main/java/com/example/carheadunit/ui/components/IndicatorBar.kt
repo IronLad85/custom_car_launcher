@@ -36,6 +36,7 @@ import com.example.carheadunit.ui.theme.SecondaryContainer
 private val TurnGreen = SecondaryContainer        // turn indicators
 private val FogAmber = Color(0xFFFFC84A)          // fog lamp (amber per design system)
 private val BeamCyan = Color(0xFF9CF0FF)          // high beam
+private val HazardAmber = Color(0xFFFFB020)       // hazard flashers
 
 /**
  * Row 1 left panel: a smoked-glass telltale strip. Icons appear etched into
@@ -47,6 +48,7 @@ private val BeamCyan = Color(0xFF9CF0FF)          // high beam
 fun IndicatorBar(
     turnLeft: Boolean = false,
     turnRight: Boolean = false,
+    hazard: Boolean = false,
     fog: Boolean = false,
     charge: Boolean = false,
     highBeam: Boolean = false,
@@ -73,6 +75,7 @@ fun IndicatorBar(
                 StripLamp(painterResource(R.drawable.ic_arrow_left_solid), TurnGreen, turnLeft, iconSize = 34.dp)
                 StripLamp(rememberVectorPainter(Icons.Filled.Warning), ErrorRed, charge)
                 StripLamp(painterResource(R.drawable.ic_arrow_right_solid), TurnGreen, turnRight, iconSize = 34.dp)
+                StripLamp(rememberVectorPainter(Icons.Filled.Warning), HazardAmber, hazard)
                 StripLamp(painterResource(R.drawable.ic_filter_drama), FogAmber, fog)
                 StripLamp(painterResource(R.drawable.ic_high_beam), BeamCyan, highBeam)
             }

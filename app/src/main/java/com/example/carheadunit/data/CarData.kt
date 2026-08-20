@@ -26,6 +26,7 @@ data class CarSnapshot(
     val highBeam: Boolean = false,
     val turnLeftLamp: Boolean = false,
     val turnRightLamp: Boolean = false,
+    val hazardMode: Boolean = false,
     val fogLight: Boolean = false,
     val chargeWarning: Boolean = false,
     val fuelLevel: Float = 0f,            // litres (0..126, 1 L resolution)
