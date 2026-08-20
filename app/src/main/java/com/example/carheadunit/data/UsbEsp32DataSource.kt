@@ -118,6 +118,31 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var dataSignals = 0
     private var lastDataLogAt = 0L
 
+    // Fuel zero-rejection (reader thread only): the tank sender occasionally
+    // reports a transient 0; hold the last good reading until 0 persists.
+    private var lastGoodFuel = 0f
+    private var lastGoodFuelAt = 0L
+    private var lastFuelRejectLogAt = 0L
+
+    /** Rejects transient fuel zeros: a tank can't empty instantly, so a 0
+     *  reading is trusted only after it has persisted for [FUEL_ZERO_HOLD_MS]. */
+    private fun fuelSmoothed(raw: Float): Float {
+        val now = System.currentTimeMillis()
+        if (raw > 0f) {
+            lastGoodFuel = raw
+            lastGoodFuelAt = now
+            return raw
+        }
+        if (lastGoodFuel > 0f && now - lastGoodFuelAt < FUEL_ZERO_HOLD_MS) {
+            if (now - lastFuelRejectLogAt >= FUEL_REJECT_LOG_INTERVAL_MS) {
+                lastFuelRejectLogAt = now
+                Log.d(TAG, "Fuel: ignoring transient 0 (holding ${lastGoodFuel}L)")
+            }
+            return lastGoodFuel
+        }
+        return raw
+    }
+
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -363,6 +388,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         dataFrames = 0
         dataSignals = 0
         lastDataLogAt = 0L
+        lastGoodFuel = 0f
+        lastGoodFuelAt = 0L
     }
 
     private fun writeCommand(cmd: Int) {
@@ -552,7 +579,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 // The firmware sends FINAL values (scale/offset already applied
                 // in extract_signal_value) — the registry scale/offset are
                 // metadata only. Re-applying them here would corrupt readings.
-                signalValues[meta.name] = raw
+                signalValues[meta.name] =
+                    if (meta.name == "FUEL_LEVEL") fuelSmoothed(raw) else raw
             }
         }
         if (listener != null && frameJson != null) listener(ts, frameJson)
@@ -621,16 +649,17 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun buildSnapshot(values: Map<String, Float>): CarSnapshot {
         fun v(name: String, default: Float = 0f) = values[name] ?: default
         fun lit(name: String) = v(name) >= 0.5f
-        // Steering: the field is unsigned |angle| with a separate sign bit
-        // (1 = negative). Fold the sign back in before mapping to the track.
-        val steerSigned = v("LW1_STEERING_ANGLE") * if (v("LW1_STEER_ANG_SIGN") >= 0.5f) -1f else 1f
+        // Steering: the field is |steering wheel degrees| (0..~1433) with a
+        // separate sign bit (1 = right, 0 = left — per this car's wiring).
+        // Fold the sign back in before mapping to the track.
+        val steerSigned = v("LW1_STEERING_ANGLE") * if (v("LW1_STEER_ANG_SIGN") >= 0.5f) 1f else -1f
         return CarSnapshot(
             speed = SpeedInfo(kmh = v("SPEED").roundToInt()),
             rpm = v("ENGINE_RPM"),
             throttle = v("THROTTLE"),
             odometerKm = v("ODOMETER"),
             climate = ClimateInfo(tempC = v("COOLANT_TEMP").roundToInt(), fanLevel = 0),
-            steeringFraction = ((steerSigned / 45f).coerceIn(-1f, 1f) + 1f) / 2f,
+            steeringFraction = ((steerSigned / STEERING_FULL_LOCK_DEG).coerceIn(-1f, 1f) + 1f) / 2f,
             highBeam = lit("HIGH_BEAM"),
             turnLeftLamp = lit("TURN_LEFT_LAMP"),
             turnRightLamp = lit("TURN_RIGHT_LAMP"),
@@ -688,5 +717,13 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val SPEED_MIN_DELTA = 4f
         // Cadence of the human-readable "USB data flowing" log line.
         const val DATA_LOG_INTERVAL_MS = 10_000L
+        // Full-lock steering wheel rotation in degrees: the track maps this
+        // to the full bar. From this car's steering math: max wheel angle
+        // ~38° × steering ratio 16 ≈ 608° at the steering wheel.
+        const val STEERING_FULL_LOCK_DEG = 608f
+        // Fuel zero-rejection window: a 0 reading is trusted only after it
+        // has persisted this long.
+        const val FUEL_ZERO_HOLD_MS = 30_000L
+        const val FUEL_REJECT_LOG_INTERVAL_MS = 10_000L
     }
 }
