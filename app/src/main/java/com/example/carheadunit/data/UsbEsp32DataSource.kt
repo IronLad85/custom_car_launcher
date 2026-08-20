@@ -66,6 +66,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var outEp: UsbEndpoint? = null
 
     private val executor = Executors.newSingleThreadExecutor()
+    // OUT commands get their own thread: submitting them to [executor] would
+    // queue them behind the blocking reader loop and they would never run
+    // while connected ('R' re-requests, pause/resume were silently lost).
+    private val writeExecutor = Executors.newSingleThreadExecutor()
     private val retryExecutor = Executors.newSingleThreadScheduledExecutor()
 
     // Reconnect episode state (guarded by scheduleReconnect/resetRetry)
@@ -155,12 +159,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
     /** Called when the app goes to the background: pauses the stream (0x50). */
     fun pause() {
-        if (connected) executor.execute { writeCommand(CMD_PAUSE) }
+        if (connected) writeExecutor.execute { writeCommand(CMD_PAUSE) }
     }
 
     /** Called when the app returns to the foreground: resumes (0x53, snapshot refresh). */
     fun resume() {
-        if (connected) executor.execute { writeCommand(CMD_START) }
+        if (connected) writeExecutor.execute { writeCommand(CMD_START) }
     }
 
     /** Release everything; the data source is single-use. */
@@ -169,6 +173,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         disconnect()
         runCatching { context.unregisterReceiver(receiver) }
         retryExecutor.shutdownNow()
+        writeExecutor.shutdownNow()
     }
 
     // ---- CarDataSource ----
@@ -445,7 +450,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             registryRequested = true
             Log.w(TAG, "Registry missing/incomplete ($registryCount/$registryTotal) — requesting re-send")
             registryCount = 0
-            executor.execute { writeCommand(CMD_REGISTRY) }
+            writeExecutor.execute { writeCommand(CMD_REGISTRY) }
         }
     }
 
@@ -560,9 +565,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val CMD_REGISTRY = 0x52 // 'R' — re-send the signal registry
         const val MAX_RETRY_ATTEMPTS = 5
         // Consecutive failed bulk reads before declaring the link dead.
-        // 4 × 200 ms poll = 800 ms of tolerated silence, comfortably above
-        // the firmware's 500 ms heartbeat on a quiet CAN bus.
-        const val READ_FAILURE_LIMIT = 4
+        // Firmware heartbeats at 500 ms, but some head-unit kernels return -1
+        // on plain timeouts and can hiccup on USB power/line-state flaps.
+        // 15 × 200 ms = 3 s of tolerated silence absorbs those quirks without
+        // nuking a live link; a real unplug still reconnects immediately via
+        // the detach broadcast.
+        const val READ_FAILURE_LIMIT = 15
         const val RETRY_BASE_DELAY_MS = 10_000L
         const val RETRY_MAX_DELAY_MS = 60_000L
         // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
