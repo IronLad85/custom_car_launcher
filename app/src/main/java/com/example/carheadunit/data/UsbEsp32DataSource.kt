@@ -495,7 +495,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             is Map<*, *> -> {
                 @Suppress("UNCHECKED_CAST")
                 val m = item as Map<Any, Any>
-                when ((m[1] as? Number)?.toLong()) {
+                // The parser stores integer keys as Long — lookups must use
+                // Long literals. Int keys (m[1]) always miss, which silently
+                // dropped every registry entry and data message.
+                when ((m[1L] as? Number)?.toLong()) {
                     0L -> registerSignal(m)   // registry: {1:0, ...}
                     1L -> updateSignals(m)    // data: {1:1, 2:[[index, raw], ...]}
                 }
@@ -504,14 +507,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     }
 
     private fun registerSignal(m: Map<Any, Any>) {
-        val index = (m[3] as? Number)?.toLong() ?: return
-        val name = m[4] as? String ?: return
-        (m[2] as? Number)?.toInt()?.let { registryTotal = it }
+        val index = (m[3L] as? Number)?.toLong() ?: return
+        val name = m[4L] as? String ?: return
+        (m[2L] as? Number)?.toInt()?.let { registryTotal = it }
         signalMeta[index] = SignalMeta(
             name = name,
-            unit = m[5] as? String ?: "",
-            scale = (m[6] as? Number)?.toFloat() ?: 1f,
-            offset = (m[7] as? Number)?.toFloat() ?: 0f,
+            unit = m[5L] as? String ?: "",
+            scale = (m[6L] as? Number)?.toFloat() ?: 1f,
+            offset = (m[7L] as? Number)?.toFloat() ?: 0f,
         )
         registryCount++
         if (!registrySeen) {
@@ -537,7 +540,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     }
 
     private fun updateSignals(m: Map<Any, Any>) {
-        val pairs = m[2] as? List<*> ?: return
+        val pairs = m[2L] as? List<*> ?: return
         if (!dataSeen) {
             dataSeen = true
             _status.value = UsbLinkState.DATA
