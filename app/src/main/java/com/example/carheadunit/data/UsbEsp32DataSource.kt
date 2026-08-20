@@ -105,6 +105,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var lastSpeedLogged = Float.NaN
     private var lastSpeedLogAt = 0L
 
+    // Debug probe: after each stream-start ACK the app asks the device for its
+    // version ('V') and logs the raw bytes of the next few reads — identifies
+    // whether the device TX path is alive post-handshake and which firmware
+    // build is flashed (no UART console needed). Reader thread only.
+    private var probeReadsLeft = 0
+
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -293,6 +299,13 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             when {
                 n > 0 -> {
                     consecutiveFailures = 0
+                    if (probeReadsLeft > 0) {
+                        probeReadsLeft--
+                        val hex = (0 until n).joinToString(" ") { "%02X".format(buf[it].toInt() and 0xFF) }
+                        val text = String(buf, 0, n, Charsets.UTF_8)
+                            .replace("\n", "\\n").replace("\r", "\\r")
+                        Log.i(TAG, "USB bytes after ACK ($n): $hex | \"$text\"")
+                    }
                     parser.feed(buf, n)
                     while (true) {
                         val item = parser.nextItem() ?: break
@@ -346,6 +359,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         lastRpmLogAt = 0L
         lastSpeedLogged = Float.NaN
         lastSpeedLogAt = 0L
+        probeReadsLeft = 0
     }
 
     private fun writeCommand(cmd: Int) {
@@ -394,6 +408,11 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 0xA1 -> {
                     Log.i(TAG, "ACK: stream started")
                     _status.value = UsbLinkState.STREAMING
+                    // Ask for the firmware version and log whatever comes
+                    // back raw — the first bytes after ACK are the decisive
+                    // diagnostic for the silent-link bug.
+                    probeReadsLeft = 8
+                    writeExecutor.execute { writeCommand(CMD_VERSION) }
                     // The device sends the registry only on its first 'S' per
                     // USB session (DTR toggle). If this app instance never
                     // sees an entry (e.g. the app restarted while the device
@@ -563,6 +582,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val CMD_START = 0x53    // 'S'
         const val CMD_PAUSE = 0x50    // 'P'
         const val CMD_REGISTRY = 0x52 // 'R' — re-send the signal registry
+        const val CMD_VERSION = 0x56  // 'V' — version query (debug probe)
         const val MAX_RETRY_ATTEMPTS = 5
         // Consecutive failed bulk reads before declaring the link dead.
         // Firmware heartbeats at 500 ms, but some head-unit kernels return -1
