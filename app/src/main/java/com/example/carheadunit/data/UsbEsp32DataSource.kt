@@ -111,6 +111,13 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     // build is flashed (no UART console needed). Reader thread only.
     private var probeReadsLeft = 0
 
+    // The 'V' reply is plain ASCII ("CANSniffer proto:1 fw:x.y ...\n"), not
+    // CBOR — feeding it to the parser misaligns the stream and eats the
+    // registry entries that follow. While bannerPending, incoming reads are
+    // scanned for the banner and only the bytes around it reach the parser.
+    private var bannerPending = false
+    private var bannerWaitReads = 0
+
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -299,17 +306,17 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             when {
                 n > 0 -> {
                     consecutiveFailures = 0
-                    if (probeReadsLeft > 0) {
-                        probeReadsLeft--
-                        val hex = (0 until n).joinToString(" ") { "%02X".format(buf[it].toInt() and 0xFF) }
-                        val text = String(buf, 0, n, Charsets.UTF_8)
-                            .replace("\n", "\\n").replace("\r", "\\r")
-                        Log.i(TAG, "USB bytes after ACK ($n): $hex | \"$text\"")
-                    }
-                    parser.feed(buf, n)
-                    while (true) {
-                        val item = parser.nextItem() ?: break
-                        handleItem(item)
+                    if (bannerPending) {
+                        handleBannerRead(buf, n)
+                    } else {
+                        if (probeReadsLeft > 0) {
+                            probeReadsLeft--
+                            val hex = (0 until n).joinToString(" ") { "%02X".format(buf[it].toInt() and 0xFF) }
+                            val text = String(buf, 0, n, Charsets.UTF_8)
+                                .replace("\n", "\\n").replace("\r", "\\r")
+                            Log.i(TAG, "USB bytes after ACK ($n): $hex | \"$text\"")
+                        }
+                        processBytes(buf, n)
                     }
                 }
                 // Not necessarily a device reset/stall: several host kernels
@@ -360,6 +367,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         lastSpeedLogged = Float.NaN
         lastSpeedLogAt = 0L
         probeReadsLeft = 0
+        bannerPending = false
     }
 
     private fun writeCommand(cmd: Int) {
@@ -400,6 +408,59 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         }
     }
 
+    /** Feeds bytes to the CBOR parser and dispatches every complete item. */
+    private fun processBytes(bytes: ByteArray, len: Int) {
+        parser.feed(bytes, len)
+        while (true) {
+            val item = parser.nextItem() ?: break
+            handleItem(item)
+        }
+    }
+
+    /**
+     * Filters the 'V' probe banner out of a read: finds "CANSniffer…\n",
+     * logs it, and sends only the bytes around it to the parser. Drops reads
+     * while the banner is still arriving, giving up after [bannerWaitReads]
+     * reads in case the device never answers 'V'.
+     */
+    private fun handleBannerRead(buf: ByteArray, n: Int) {
+        val start = indexOfText(buf, 0, n, BANNER_SIGNATURE)
+        val nl = if (start >= 0) indexOfByte(buf, start, n, '\n') else -1
+        if (start < 0 && nl < 0) {
+            bannerWaitReads--
+            if (bannerWaitReads > 0) return // still expecting the banner — drop this read
+            bannerPending = false // never arrived (old firmware?): parse normally
+            processBytes(buf, n)
+            return
+        }
+        // CBOR bytes that preceded the banner in the same read are valid —
+        // feed them first.
+        if (start > 0) processBytes(buf, start)
+        val b0 = maxOf(0, start)
+        val bEnd = if (nl >= 0) nl else n
+        if (bEnd > b0) {
+            Log.i(TAG, "Firmware: \"${String(buf, b0, bEnd - b0, Charsets.UTF_8)}\"")
+        }
+        bannerPending = nl < 0 // banner may continue in the next read
+        if (nl >= 0 && nl + 1 < n) processBytes(buf.copyOfRange(nl + 1, n), n - nl - 1)
+    }
+
+    private fun indexOfText(buf: ByteArray, from: Int, len: Int, s: String): Int {
+        outer@ for (i in from until len - s.length + 1) {
+            for (j in s.indices) {
+                if (buf[i + j] != s[j].code.toByte()) continue@outer
+            }
+            return i
+        }
+        return -1
+    }
+
+    private fun indexOfByte(buf: ByteArray, from: Int, len: Int, c: Char): Int {
+        val b = c.code.toByte()
+        for (i in from until len) if (buf[i] == b) return i
+        return -1
+    }
+
     // ---- protocol handling ----
 
     private fun handleItem(item: Any) {
@@ -412,6 +473,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                     // back raw — the first bytes after ACK are the decisive
                     // diagnostic for the silent-link bug.
                     probeReadsLeft = 8
+                    bannerPending = true
+                    bannerWaitReads = 3
                     writeExecutor.execute { writeCommand(CMD_VERSION) }
                     // The device sends the registry only on its first 'S' per
                     // USB session (DTR toggle). If this app instance never
@@ -583,6 +646,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val CMD_PAUSE = 0x50    // 'P'
         const val CMD_REGISTRY = 0x52 // 'R' — re-send the signal registry
         const val CMD_VERSION = 0x56  // 'V' — version query (debug probe)
+        const val BANNER_SIGNATURE = "CANSniffer"
         const val MAX_RETRY_ATTEMPTS = 5
         // Consecutive failed bulk reads before declaring the link dead.
         // Firmware heartbeats at 500 ms, but some head-unit kernels return -1
