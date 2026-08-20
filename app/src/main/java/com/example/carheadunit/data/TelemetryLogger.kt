@@ -63,6 +63,12 @@ class TelemetryLogger(context: Context) {
 
     /** Called from the tick with a serialized signal dump; cheap and main-thread safe. */
     fun sample(payload: String) {
+        // Bench mode: print each sample the moment it arrives — no buffering,
+        // so the tick-to-logcat path is directly visible.
+        if (LOG_ONLY) {
+            Log.i(TAG, "Sample: $payload")
+            return
+        }
         synchronized(buffer) {
             buffer.add(payload)
             bufferTs.add(System.currentTimeMillis())
@@ -91,6 +97,14 @@ class TelemetryLogger(context: Context) {
     }
 
     private fun flushToDb(payloads: List<String>, stamps: List<Long>) {
+        // Bench mode: skip SQLite and uploads entirely, print samples to logcat.
+        // Flip LOG_ONLY to false to restore the store-and-upload pipeline.
+        if (LOG_ONLY) {
+            for (i in payloads.indices) {
+                Log.i(TAG, "Sample[${stamps[i]}]: ${payloads[i]}")
+            }
+            return
+        }
         try {
             db.insertBatch(payloads, stamps)
             Log.d(TAG, "Stored ${payloads.size} samples (pending=${db.pendingCount()})")
@@ -100,6 +114,7 @@ class TelemetryLogger(context: Context) {
     }
 
     private fun scheduleUpload() {
+        if (LOG_ONLY) return
         val now = System.currentTimeMillis()
         // Basic rate-limit: at most one upload pass per minute regardless of callbacks
         if (now - lastUploadAttemptAt < MIN_UPLOAD_INTERVAL_MS) return
@@ -223,6 +238,9 @@ class TelemetryLogger(context: Context) {
 
     private companion object {
         const val TAG = "TelemetryLogger"
+        // Bench mode: samples go to logcat only (no SQLite, no HTTP).
+        // Flip to false when the real telemetry endpoint is in use.
+        const val LOG_ONLY = true
         // TODO: replace with your server endpoint
         const val ENDPOINT = "https://telemetry.example.com/api/ingest"
         const val DEVICE_ID = "headunit-001"

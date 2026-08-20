@@ -23,9 +23,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -54,10 +56,12 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
     val speedFrac = (kmh / 200f).coerceIn(0f, 1f)
     val rpm = 0.9f + kmh * 0.014f
 
-    GlassPanel(modifier = modifier, contentPadding = 0.dp) {
-        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
-            // Dot-grid decor pattern
-            Canvas(Modifier.fillMaxSize()) {
+    // Static dot-grid decor: remembered modifier so the ~400-circle pattern
+    // draws once and is not re-issued on every 1 Hz telemetry tick.
+    val dots = remember {
+        Modifier
+            .fillMaxSize()
+            .drawBehind {
                 val spacing = 24.dp.toPx()
                 var y = 0f
                 while (y < size.height) {
@@ -69,6 +73,11 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                     y += spacing
                 }
             }
+    }
+
+    GlassPanel(modifier = modifier, contentPadding = 0.dp) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
+            Box(Modifier.then(dots))
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -186,38 +195,48 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                             }
                             Spacer(Modifier.height(6.dp))
                         }
-                        // RPM: stepped heat bar. The ramp is tuned to real driving:
+                        // RPM heat bar. The ramp is tuned to real driving:
                         // 0-2.5k cyan (daily zone), 2.5-3k cyan→yellow, 3k+ yellow→red,
                         // full red at ~8k (redline).
+                        // Single Canvas: one continuous ramp gradient, ghosted past the
+                        // fill with a soft one-segment leading edge — three draws per
+                        // tick instead of 40 gradient-shader boxes.
                         val rpmFrac = (rpm / 8f).coerceIn(0f, 1f)
-                        val rpmSegments = 40
-                        Row(
+                        Canvas(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(if (compact) 16.dp else 24.dp),
-                            horizontalArrangement = Arrangement.spacedBy(1.dp),
                         ) {
-                            repeat(rpmSegments) { i ->
-                                // Each segment blends into its neighbor's color, so the
-                                // ramp reads as one continuous gradient through the steps.
-                                val tFrom = i / (rpmSegments - 1f)
-                                val tTo = (i + 1) / (rpmSegments - 1f)
-                                val cFrom = rpmHeatColor(tFrom)
-                                val cTo = rpmHeatColor(tTo)
-                                // Fractional leading edge: the boundary segment fades
-                                // from ghost (0.08) to full brightness instead of snapping.
-                                val fill = rpmFrac * rpmSegments - i
-                                val alpha = 0.08f + 0.92f * fill.coerceIn(0f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(1.dp))
-                                        .background(
-                                            Brush.horizontalGradient(
-                                                listOf(cFrom.copy(alpha = alpha), cTo.copy(alpha = alpha)),
-                                            )
+                            val segW = size.width / 40f
+                            val fillX = size.width * rpmFrac
+                            // Full ramp across the whole bar
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colors = (0..8).map { rpmHeatColor(it / 8f) },
+                                ),
+                            )
+                            // Soft leading edge: fade to dark over one segment
+                            if (fillX < size.width - 0.5f) {
+                                val fadeEnd = minOf(fillX + segW, size.width)
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color.Black.copy(alpha = 0f),
+                                            Color.Black.copy(alpha = 0.92f),
                                         ),
+                                        startX = fillX,
+                                        endX = fadeEnd,
+                                    ),
+                                    topLeft = Offset(fillX, 0f),
+                                    size = Size(fadeEnd - fillX, size.height),
+                                )
+                            }
+                            // Unfilled portion ghosted (matches the old 0.08 alpha look)
+                            if (fillX + segW < size.width - 0.5f) {
+                                drawRect(
+                                    color = Color.Black.copy(alpha = 0.92f),
+                                    topLeft = Offset(fillX + segW, 0f),
+                                    size = Size(size.width - fillX - segW, size.height),
                                 )
                             }
                         }

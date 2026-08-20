@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- CAN Sniffer (ESP32-S3): VID 0x303A, PID 0x4000 -->
+<!-- CAN Sniffer (ESP32-S3): VID 0x303A.
+     PID 0x4000 = pinned firmware PID (CONFIG_TINYUSB_DESC_CUSTOM_PID).
+     PID 0x4001 = esp_tinyusb auto-PID (0x4000 | CFG_TUD_CDC) that devices
+     report until the pinned firmware is flashed — accept both. -->
 <resources>
     <usb-device vendor-id="12346" product-id="16384" />
+    <usb-device vendor-id="12346" product-id="16385" />
 </resources>

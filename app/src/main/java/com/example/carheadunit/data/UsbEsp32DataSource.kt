@@ -5,9 +5,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Log
@@ -34,10 +36,10 @@ enum class UsbLinkState(val label: String) {
  * Live telemetry from the CAN Sniffer (ESP32-S3) over USB CDC-ACM.
  * Protocol (docs/usb_protocol.md): raw command bytes out (0x53 start, 0x50
  * pause), raw ACKs + CBOR in. Registry maps index -> name/unit/scale/offset;
- * data messages carry [index, raw] pairs; value = raw * scale + offset.
+ * data messages carry final values — the firmware applies scale/offset.
  *
- * Falls back to the HTTP bridge source (emulator dev) and then the mock
- * simulator when no USB device is attached.
+ * While no USB device is attached the source reports the static default
+ * snapshot (the dock shows "ESP32 offline").
  *
  * Reconnect policy: failed opens (and device scans while absent) retry with
  * exponential delays starting at 10s, capped at 60s, up to 5 attempts per
@@ -51,15 +53,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     @Volatile
     private var running = false
 
-    private val fallback = Esp32DataSource()
     private val parser = CborParser()
     private val signalMeta = HashMap<Long, SignalMeta>()
     private val signalValues = HashMap<String, Float>()
 
     private var registryCount = 0
 
-    private var device: UsbDevice? = null
     private var connection: UsbDeviceConnection? = null
+    private var usbIface: UsbInterface? = null
     private var inEp: UsbEndpoint? = null
     private var outEp: UsbEndpoint? = null
 
@@ -77,6 +78,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     // One-shot flags gating status progression (reset on disconnect)
     private var registrySeen = false
     private var dataSeen = false
+
+    // Registry bookkeeping: the device sends the expected total (key 2) with
+    // every registry entry. If entries were lost in transit (TX contention on
+    // the device drops packets), a delayed check asks for a re-send.
+    private var registryTotal = 0
+    private var registryRequested = false
 
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -150,12 +157,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     // ---- CarDataSource ----
 
     override fun snapshot(): CarSnapshot {
-        if (!connected) return fallback.snapshot()
+        if (!connected) return CarSnapshot() // offline: static defaults, dock shows the link state
         val values: Map<String, Float> = synchronized(signalValues) { HashMap(signalValues) }
         return buildSnapshot(values)
     }
-
-    override fun togglePlayback() = fallback.togglePlayback()
 
     override fun signalDump(): String? {
         if (!connected) return null
@@ -173,7 +178,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
     private fun connect() {
         val dev = usbManager.deviceList.values.firstOrNull {
-            it.vendorId == VID && it.productId == PID
+            it.vendorId == VID && (it.productId == PID || it.productId == PID_ESP_TINYUSB_AUTO)
         } ?: run {
             Log.d(TAG, "No CAN Sniffer device present")
             scheduleReconnect()
@@ -191,20 +196,54 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         executor.execute { openDevice(dev) }
     }
 
+    /**
+     * The TinyUSB default descriptor exposes two interfaces: 0 = CDC control
+     * (a single interrupt endpoint), 1 = CDC data (the bulk pair). The data
+     * interface lists its endpoints OUT first, then IN — so both the interface
+     * index and the endpoint order must be resolved dynamically.
+     */
+    private fun findDataInterface(dev: UsbDevice): UsbInterface? {
+        for (i in 0 until dev.interfaceCount) {
+            val iface = dev.getInterface(i)
+            if (iface.interfaceClass == UsbConstants.USB_CLASS_CDC_DATA ||
+                iface.endpointCount == 2
+            ) {
+                return iface
+            }
+        }
+        return null
+    }
+
     private fun openDevice(dev: UsbDevice) {
         try {
-            val iface = dev.getInterface(0)
+            val iface = findDataInterface(dev)
+            if (iface == null) {
+                Log.w(TAG, "No CDC data interface on ${dev.deviceName}")
+                scheduleReconnect()
+                return
+            }
             val conn = usbManager.openDevice(dev) ?: return
             if (!conn.claimInterface(iface, true)) {
                 conn.close()
                 return
             }
-            inEp = iface.getEndpoint(0)
-            outEp = iface.getEndpoint(1)
+            for (i in 0 until iface.endpointCount) {
+                val ep = iface.getEndpoint(i)
+                when (ep.direction) {
+                    UsbConstants.USB_DIR_IN -> inEp = ep
+                    UsbConstants.USB_DIR_OUT -> outEp = ep
+                }
+            }
+            if (inEp == null || outEp == null) {
+                Log.w(TAG, "CDC data interface missing bulk IN/OUT endpoints")
+                conn.close()
+                scheduleReconnect()
+                return
+            }
             // Assert DTR (SET_CONTROL_LINE_STATE) — the device stays silent until then
             conn.controlTransfer(0x21, 0x22, 0x0001, 0, null, 0, 100)
             connection = conn
-            device = dev
+            usbIface = iface
             connected = true
             resetRetry()
             _status.value = UsbLinkState.CONNECTED
@@ -223,13 +262,31 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         val ep = inEp ?: return
         val buf = ByteArray(256)
         running = true
+        var consecutiveFailures = 0
         while (running && connected) {
             val n = conn.bulkTransfer(ep, buf, buf.size, 200)
-            if (n > 0) {
-                parser.feed(buf, n)
-                while (true) {
-                    val item = parser.nextItem() ?: break
-                    handleItem(item)
+            when {
+                n > 0 -> {
+                    consecutiveFailures = 0
+                    parser.feed(buf, n)
+                    while (true) {
+                        val item = parser.nextItem() ?: break
+                        handleItem(item)
+                    }
+                }
+                // Not necessarily a device reset/stall: several host kernels
+                // (e.g. OnePlus) return -1 on a read timeout instead of 0.
+                // A real reset fails immediately and repeatedly; a quiet link
+                // fails once per 200 ms poll (the firmware heartbeats at
+                // 500 ms). Require a run of failures before reconnecting.
+                n < 0 -> {
+                    consecutiveFailures++
+                    if (consecutiveFailures >= READ_FAILURE_LIMIT) {
+                        Log.w(TAG, "USB read failed $consecutiveFailures times — reconnecting")
+                        disconnect()
+                        scheduleReconnect()
+                        break
+                    }
                 }
             }
         }
@@ -239,11 +296,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun disconnect() {
         running = false
         runCatching {
-            connection?.releaseInterface(device?.getInterface(0))
+            val iface = usbIface
+            if (iface != null) connection?.releaseInterface(iface)
         }
         runCatching { connection?.close() }
         connection = null
-        device = null
+        usbIface = null
         inEp = null
         outEp = null
         if (connected) {
@@ -253,6 +311,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         _status.value = UsbLinkState.OFFLINE
         registrySeen = false
         dataSeen = false
+        registryTotal = 0
+        registryRequested = false
         parser.reset()
         signalMeta.clear()
         synchronized(signalValues) { signalValues.clear() }
@@ -304,6 +364,16 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 0xA1 -> {
                     Log.i(TAG, "ACK: stream started")
                     _status.value = UsbLinkState.STREAMING
+                    // The device sends the registry only on its first 'S' per
+                    // USB session (DTR toggle). If this app instance never
+                    // sees an entry (e.g. the app restarted while the device
+                    // stayed powered), ask for a re-send once the paced send
+                    // would have finished.
+                    retryExecutor.schedule(
+                        { requestRegistryIfMissing() },
+                        REGISTRY_GRACE_MS,
+                        TimeUnit.MILLISECONDS,
+                    )
                 }
                 0xA0 -> {
                     Log.i(TAG, "ACK: stream paused")
@@ -324,6 +394,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun registerSignal(m: Map<Any, Any>) {
         val index = (m[3] as? Number)?.toLong() ?: return
         val name = m[4] as? String ?: return
+        (m[2] as? Number)?.toInt()?.let { registryTotal = it }
         signalMeta[index] = SignalMeta(
             name = name,
             unit = m[5] as? String ?: "",
@@ -340,6 +411,19 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         }
     }
 
+    /** Sends 'R' (registry re-send) if this session has no usable registry:
+     *  none seen at all (device skipped it after an app restart without a DTR
+     *  drop) or entries lost to TX contention. */
+    private fun requestRegistryIfMissing() {
+        if (!connected || registryRequested) return
+        if (!registrySeen || (registryTotal > 0 && registryCount < registryTotal)) {
+            registryRequested = true
+            Log.w(TAG, "Registry missing/incomplete ($registryCount/$registryTotal) — requesting re-send")
+            registryCount = 0
+            executor.execute { writeCommand(CMD_REGISTRY) }
+        }
+    }
+
     private fun updateSignals(m: Map<Any, Any>) {
         val pairs = m[2] as? List<*> ?: return
         if (!dataSeen) {
@@ -352,7 +436,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 val index = (pair.getOrNull(0) as? Number)?.toLong() ?: continue
                 val raw = (pair.getOrNull(1) as? Number)?.toFloat() ?: continue
                 val meta = signalMeta[index] ?: continue
-                signalValues[meta.name] = raw * meta.scale + meta.offset
+                // The firmware sends FINAL values (scale/offset already applied
+                // in extract_signal_value) — the registry scale/offset are
+                // metadata only. Re-applying them here would corrupt readings.
+                signalValues[meta.name] = raw
             }
         }
     }
@@ -393,11 +480,23 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val TAG = "UsbEsp32DataSource"
         const val ACTION_USB_PERMISSION = "com.example.carheadunit.USB_PERMISSION"
         const val VID = 0x303A
+        // Firmware is pinned to PID 0x4000 (sdkconfig CONFIG_TINYUSB_DESC_CUSTOM_PID).
+        // 0x4001 is the esp_tinyusb auto-PID (0x4000 | CFG_TUD_CDC) that devices
+        // report until the firmware with the pin is flashed — accept both.
         const val PID = 0x4000
-        const val CMD_START = 0x53  // 'S'
-        const val CMD_PAUSE = 0x50  // 'P'
+        const val PID_ESP_TINYUSB_AUTO = 0x4001
+        const val CMD_START = 0x53    // 'S'
+        const val CMD_PAUSE = 0x50    // 'P'
+        const val CMD_REGISTRY = 0x52 // 'R' — re-send the signal registry
         const val MAX_RETRY_ATTEMPTS = 5
+        // Consecutive failed bulk reads before declaring the link dead.
+        // 4 × 200 ms poll = 800 ms of tolerated silence, comfortably above
+        // the firmware's 500 ms heartbeat on a quiet CAN bus.
+        const val READ_FAILURE_LIMIT = 4
         const val RETRY_BASE_DELAY_MS = 10_000L
         const val RETRY_MAX_DELAY_MS = 60_000L
+        // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
+        // for lost entries a safe margin after the first entry arrives.
+        const val REGISTRY_GRACE_MS = 1_500L
     }
 }

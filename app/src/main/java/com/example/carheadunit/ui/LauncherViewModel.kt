@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appsRepository = AppsRepository(application)
-    // USB CAN Sniffer when attached; HTTP bridge (emulator dev) then mock as fallbacks.
+    // USB CAN Sniffer is the only data source; offline shows static defaults.
     private val usbSource = UsbEsp32DataSource(application)
     private val dataSource: CarDataSource = usbSource
 
@@ -174,11 +174,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun launchApp(app: AppEntry) = appsRepository.launch(app)
-
-    fun togglePlayback() {
-        dataSource.togglePlayback()
-        _snapshot.value = dataSource.snapshot()
-    }
 
     fun openDrawer() {
         _drawerOpen.value = true

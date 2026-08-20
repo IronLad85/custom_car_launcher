@@ -36,7 +36,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             CarHeadUnitTheme {
-                val snapshot by viewModel.snapshot.collectAsState()
                 val apps by viewModel.apps.collectAsState()
                 val pinnedSet by viewModel.pinned.collectAsState()
                 val drawerOpen by viewModel.drawerOpen.collectAsState()
@@ -44,7 +43,10 @@ class MainActivity : ComponentActivity() {
                 val usbStatus by viewModel.usbStatus.collectAsState()
 
                 HomeScreen(
-                    snapshot = snapshot,
+                    // Telemetry is collected inside Dashboard, which is only
+                    // composed while the drawer is closed — the 1 Hz tick must
+                    // not recompose the all-apps grid on low-end SoCs.
+                    snapshotFlow = viewModel.snapshot,
                     apps = apps,
                     pinnedSet = pinnedSet,
                     drawerOpen = drawerOpen,

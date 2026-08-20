@@ -24,6 +24,19 @@ class CborParser(private val capacity: Int = 1024) {
 
     /** Parses and removes one complete item; null if the buffer needs more bytes. */
     fun nextItem(): Any? {
+        // The protocol interleaves raw handshake ACK bytes (0xA0 pause, 0xA1
+        // start) at message boundaries. They are not CBOR: 0xA1 would decode as
+        // a map header and swallow following bytes, so pass them through as
+        // their byte value. A CBOR map header of 0xA0/0xA1 never legitimately
+        // occurs — the device only sends map(2) and map(7) messages.
+        if (size > 0) {
+            val first = buf[0].toInt() and 0xFF
+            if (first == 0xA0 || first == 0xA1) {
+                System.arraycopy(buf, 1, buf, 0, size - 1)
+                size--
+                return first.toLong()
+            }
+        }
         val decoded = tryDecode(buf, 0, size) ?: return null
         val (value, consumed) = decoded
         System.arraycopy(buf, consumed, buf, 0, size - consumed)

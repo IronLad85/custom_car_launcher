@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
@@ -25,7 +26,10 @@ android {
             // Personal-use shortcut: sign release with the debug keystore.
             // Not for Play Store distribution — updates must share a key.
             signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = false
+            // R8 shrinking is a solid win on low-end head units: smaller code,
+            // less memory pressure. Compose keep-rules are applied by AGP.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -42,9 +46,10 @@ android {
     buildFeatures {
         compose = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
-    }
+    // Compose is compiled by the org.jetbrains.kotlin.plugin.compose Gradle
+    // plugin (Kotlin 2.0.x): strong skipping mode is on by default, which makes
+    // composables with unstable params (List<AppEntry>, Set<String>…) skippable —
+    // the biggest remaining recomposition win for the drawer on weak SoCs.
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
