@@ -203,7 +203,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private companion object {
         const val PREFS_NAME = "launcher_prefs"
         const val KEY_DOCK_PINS = "dock_pins"
-        const val TICK_MS = 1000L
-        const val LOG_SAMPLE_TICKS = 10
+        // UI refresh cadence: 4 Hz keeps the gauges responsive on live data.
+        const val TICK_MS = 250L
+        // Telemetry sampling stays at 10 s: 10 s / 250 ms = 40 ticks.
+        const val LOG_SAMPLE_TICKS = 40
     }
 }

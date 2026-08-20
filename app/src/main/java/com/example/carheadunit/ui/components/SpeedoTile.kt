@@ -176,26 +176,25 @@ fun SpeedoTile(speed: SpeedInfo, rpm: Float, modifier: Modifier = Modifier) {
                             }
                         }
                         Spacer(Modifier.height(if (compact) 3.dp else 8.dp))
-                        // RPM label + value (hidden in compact mode)
-                        if (!compact) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom,
-                            ) {
-                                Text(
-                                    text = "RPM x 1000",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = OnSurfaceVariant.copy(alpha = 0.8f),
-                                )
-                                Text(
-                                    text = String.format(java.util.Locale.US, "%.1f", rpmThousands),
-                                    style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
-                                    color = OnSurface,
-                                )
-                            }
-                            Spacer(Modifier.height(6.dp))
+                        // RPM label + value (shown in compact mode too — the
+                        // readout was hidden and users saw no RPM at all)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
+                            Text(
+                                text = "RPM x 1000",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = OnSurfaceVariant.copy(alpha = 0.8f),
+                            )
+                            Text(
+                                text = String.format(java.util.Locale.US, "%.1f", rpmThousands),
+                                style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
+                                color = OnSurface,
+                            )
                         }
+                        Spacer(Modifier.height(6.dp))
                         // RPM heat bar. The ramp is tuned to real driving:
                         // 0-2.5k cyan (daily zone), 2.5-3k cyan→yellow, 3k+ yellow→red,
                         // full red at ~8k (redline).
