@@ -105,18 +105,18 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var lastSpeedLogged = Float.NaN
     private var lastSpeedLogAt = 0L
 
-    // Debug probe: after each stream-start ACK the app asks the device for its
-    // version ('V') and logs the raw bytes of the next few reads — identifies
-    // whether the device TX path is alive post-handshake and which firmware
-    // build is flashed (no UART console needed). Reader thread only.
-    private var probeReadsLeft = 0
-
     // The 'V' reply is plain ASCII ("CANSniffer proto:1 fw:x.y ...\n"), not
     // CBOR — feeding it to the parser misaligns the stream and eats the
     // registry entries that follow. While bannerPending, incoming reads are
     // scanned for the banner and only the bytes around it reach the parser.
     private var bannerPending = false
     private var bannerWaitReads = 0
+
+    // Data-flow diagnostics (reader thread only): a periodic human-readable
+    // line shows that frames are arriving and what the latest values are.
+    private var dataFrames = 0
+    private var dataSignals = 0
+    private var lastDataLogAt = 0L
 
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -309,13 +309,6 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                     if (bannerPending) {
                         handleBannerRead(buf, n)
                     } else {
-                        if (probeReadsLeft > 0) {
-                            probeReadsLeft--
-                            val hex = (0 until n).joinToString(" ") { "%02X".format(buf[it].toInt() and 0xFF) }
-                            val text = String(buf, 0, n, Charsets.UTF_8)
-                                .replace("\n", "\\n").replace("\r", "\\r")
-                            Log.i(TAG, "USB bytes after ACK ($n): $hex | \"$text\"")
-                        }
                         processBytes(buf, n)
                     }
                 }
@@ -366,8 +359,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         lastRpmLogAt = 0L
         lastSpeedLogged = Float.NaN
         lastSpeedLogAt = 0L
-        probeReadsLeft = 0
         bannerPending = false
+        dataFrames = 0
+        dataSignals = 0
+        lastDataLogAt = 0L
     }
 
     private fun writeCommand(cmd: Int) {
@@ -469,10 +464,8 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 0xA1 -> {
                     Log.i(TAG, "ACK: stream started")
                     _status.value = UsbLinkState.STREAMING
-                    // Ask for the firmware version and log whatever comes
-                    // back raw — the first bytes after ACK are the decisive
-                    // diagnostic for the silent-link bug.
-                    probeReadsLeft = 8
+                    // Ask for the firmware version — the banner reply confirms
+                    // the device TX path is alive post-handshake.
                     bannerPending = true
                     bannerWaitReads = 3
                     writeExecutor.execute { writeCommand(CMD_VERSION) }
@@ -510,17 +503,19 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         val index = (m[3L] as? Number)?.toLong() ?: return
         val name = m[4L] as? String ?: return
         (m[2L] as? Number)?.toInt()?.let { registryTotal = it }
-        signalMeta[index] = SignalMeta(
+        val meta = SignalMeta(
             name = name,
             unit = m[5L] as? String ?: "",
             scale = (m[6L] as? Number)?.toFloat() ?: 1f,
             offset = (m[7L] as? Number)?.toFloat() ?: 0f,
         )
+        signalMeta[index] = meta
         registryCount++
         if (!registrySeen) {
             registrySeen = true
             _status.value = UsbLinkState.STREAMING
         }
+        Log.d(TAG, "Registered[$index/$registryTotal] ${meta.name} (unit=\"${meta.unit}\", scale=${meta.scale}, offset=${meta.offset})")
         if (registryCount % 32 == 0) {
             Log.i(TAG, "Registry complete: $registryCount signals")
         }
@@ -561,6 +556,23 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             }
         }
         if (listener != null && frameJson != null) listener(ts, frameJson)
+
+        // Human-readable data-flow heartbeat: log the first frame right away,
+        // then at most once per DATA_LOG_INTERVAL_MS with the latest values.
+        if (pairs.isNotEmpty()) {
+            dataFrames++
+            dataSignals += pairs.size
+            if (dataFrames == 1 || ts - lastDataLogAt >= DATA_LOG_INTERVAL_MS) {
+                lastDataLogAt = ts
+                val latest = pairs.joinToString(", ") { p ->
+                    val pair = p as? List<*> ?: return@joinToString "?"
+                    val index = (pair.getOrNull(0) as? Number)?.toLong() ?: return@joinToString "?"
+                    val raw = (pair.getOrNull(1) as? Number)?.toFloat() ?: return@joinToString "?"
+                    "${signalMeta[index]?.name ?: "i$index"}=$raw"
+                }
+                Log.i(TAG, "USB data flowing: $dataFrames frames, $dataSignals signals | latest: $latest")
+            }
+        }
     }
 
     /** Compact JSON of one frame's changed signals, e.g. {"SPEED":42.5,...}.
@@ -674,5 +686,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val DEADBAND_MIN_INTERVAL_MS = 10_000L
         const val RPM_MIN_DELTA = 200f
         const val SPEED_MIN_DELTA = 4f
+        // Cadence of the human-readable "USB data flowing" log line.
+        const val DATA_LOG_INTERVAL_MS = 10_000L
     }
 }
