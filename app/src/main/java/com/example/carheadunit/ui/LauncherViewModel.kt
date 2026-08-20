@@ -51,6 +51,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private var indicatorsOn = false
     private var lastChimeAt = 0L
 
+    // True while another app is in front (main thread only): the telemetry
+    // tick freezes so stale values aren't refreshed or logged in background.
+    private var backgrounded = false
+
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _apps = MutableStateFlow<List<AppEntry>>(emptyList())
@@ -91,25 +95,29 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             var tickCount = 0
             while (isActive) {
-                val snap = dataSource.snapshot()
-                _snapshot.value = snap.copy(
-                    media = mediaInfo(),
-                    todayKm = todayKmTracker.todayKm(snap.odometerKm),
-                )
-                // Indicator chime on the lamp rising edge (debounced).
-                val indOn = snap.turnLeftLamp || snap.turnRightLamp
-                if (indOn && !indicatorsOn) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastChimeAt >= CHIME_MIN_INTERVAL_MS) {
-                        lastChimeAt = now
-                        chimePlayer.indicatorTick()
+                // Frozen while another app is in front: no state refresh, no
+                // telemetry sampling of stale values, no chimes.
+                if (!backgrounded) {
+                    val snap = dataSource.snapshot()
+                    _snapshot.value = snap.copy(
+                        media = mediaInfo(),
+                        todayKm = todayKmTracker.todayKm(snap.odometerKm),
+                    )
+                    // Indicator chime on the lamp rising edge (debounced).
+                    val indOn = snap.turnLeftLamp || snap.turnRightLamp
+                    if (indOn && !indicatorsOn) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastChimeAt >= CHIME_MIN_INTERVAL_MS) {
+                            lastChimeAt = now
+                            chimePlayer.indicatorTick()
+                        }
                     }
-                }
-                indicatorsOn = indOn
-                tickCount++
-                // Log ALL received signals every 10 s (interval, not per message)
-                if (tickCount % LOG_SAMPLE_TICKS == 0) {
-                    dataSource.signalDump()?.let { telemetryLogger.sample(it) }
+                    indicatorsOn = indOn
+                    tickCount++
+                    // Log ALL received signals every 10 s (interval, not per message)
+                    if (tickCount % LOG_SAMPLE_TICKS == 0) {
+                        dataSource.signalDump()?.let { telemetryLogger.sample(it) }
+                    }
                 }
                 delay(TICK_MS)
             }
@@ -137,13 +145,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         super.onCleared()
     }
 
-    /** USB stream pauses while the app is backgrounded (0x50). */
+    /** Recording continues in the background: only the UI tick freezes. The
+     *  USB stream and per-frame SQLite logging keep running on their own
+     *  threads (cheaper than foreground — no recomposition, no chimes). */
     fun onBackground() {
-        usbSource.pause()
+        backgrounded = true
     }
 
     /** USB stream resumes on foreground (0x53, snapshot refresh). */
     fun onForeground() {
+        backgrounded = false
         usbSource.resume()
         // The user may have just granted notification access in Settings
         refreshMediaAccess()
