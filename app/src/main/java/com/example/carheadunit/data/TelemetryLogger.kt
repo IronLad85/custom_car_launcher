@@ -69,6 +69,15 @@ class TelemetryLogger(context: Context) {
         // Try once at boot in case the network is already up
         scheduleUpload()
         Log.i(TAG, "Telemetry logger started (endpoint=$ENDPOINT)")
+        // Session marker: one row per process start, so kills/restarts (and
+        // their recording gaps) are visible directly in the DB.
+        if (!LOG_ONLY) {
+            executor.execute {
+                runCatching {
+                    db.insertBatch(listOf("""{"event":"start"}"""), listOf(System.currentTimeMillis()))
+                }
+            }
+        }
     }
 
     /** Called from the tick with a serialized signal dump; cheap and main-thread safe. */
