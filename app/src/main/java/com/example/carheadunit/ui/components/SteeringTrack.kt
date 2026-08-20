@@ -21,7 +21,7 @@ import com.example.carheadunit.ui.theme.White20
  * tick marks, an active fill segment from center, and a glowing thumb.
  */
 @Composable
-fun SteeringTrack(modifier: Modifier = Modifier, activeFraction: Float = 0.65f) {
+fun SteeringTrack(modifier: Modifier = Modifier, activeFraction: Float = 0.5f) {
     GlassPanel(modifier = modifier.fillMaxWidth()) {
         Canvas(Modifier.fillMaxSize()) {
             val inset = 16.dp.toPx()

@@ -1,13 +1,10 @@
 package com.example.carheadunit.ui.components
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,14 +20,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -45,9 +37,8 @@ import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.PrimaryFixed
 import com.example.carheadunit.ui.theme.PrimaryFixedDim
 import com.example.carheadunit.ui.theme.SecondaryFixed
-import com.example.carheadunit.ui.theme.SurfaceHighest
 
-/** Vehicle metrics strip: power gauge, range, odometer, throttle, temperature. */
+/** Vehicle metrics strip: fuel, odometer, throttle, temperature. */
 @Composable
 fun MetricsTile(snapshot: CarSnapshot, modifier: Modifier = Modifier) {
     GlassPanel(modifier = modifier.fillMaxWidth(), contentPadding = 0.dp) {
@@ -59,13 +50,13 @@ fun MetricsTile(snapshot: CarSnapshot, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            PowerSection(snapshot.power)
+            FuelSection(snapshot.fuelLevel)
             Divider()
-            OdometerSection()
+            OdometerSection(snapshot.todayKm, snapshot.odometerKm)
             Divider()
             TempSection(snapshot)
             Divider()
-            ThrottleSection()
+            ThrottleSection(snapshot.throttle)
         }
     }
 }
@@ -81,55 +72,30 @@ private fun Divider() {
     )
 }
 
-/** POWER gauge block (range removed). Value derived live: throttle × rpm/redline. */
+/** Fuel remaining from the gauge, in litres (0 until the signal arrives). */
 @Composable
-private fun PowerSection(power: Float) {
-    BoxWithConstraints {
-        val gaugeSize = (maxHeight - 28.dp).coerceIn(52.dp, 84.dp)
-        PowerGauge(gaugeSize, power.coerceIn(0f, 1f))
-    }
-}
-
-@Composable
-private fun PowerGauge(gaugeSize: Dp, power: Float) {
+private fun FuelSection(fuelLevel: Float) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("POWER", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
-        Box(Modifier.size(gaugeSize), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxSize()) {
-                val stroke = 2.5.dp.toPx()
-                val r = size.minDimension / 2f - stroke
-                val topLeft = Offset(size.width / 2 - r, size.height / 2 - r)
-                val arcSize = Size(2 * r, 2 * r)
-                // Track
-                drawArc(SurfaceHighest, 270f, 360f, false, topLeft, arcSize, style = Stroke(stroke))
-                // Glow
-                drawArc(
-                    PrimaryContainer.copy(alpha = 0.25f),
-                    270f,
-                    360f * power,
-                    false,
-                    topLeft,
-                    arcSize,
-                    style = Stroke(stroke * 2f),
-                )
-                // Value sweep from 12 o'clock
-                drawArc(
-                    PrimaryContainer,
-                    270f,
-                    (360f * power - 4f).coerceAtLeast(0f),
-                    false,
-                    topLeft,
-                    arcSize,
-                    style = Stroke(stroke, cap = StrokeCap.Round),
-                )
-            }
-            Text("${(power * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall, color = Primary)
+        Text("FUEL", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "${fuelLevel.roundToInt()}",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 27.sp, lineHeight = 30.sp),
+                color = PrimaryFixed,
+            )
+            Text(
+                text = "L",
+                style = MaterialTheme.typography.labelSmall,
+                color = PrimaryFixedDim.copy(alpha = 0.6f),
+                modifier = Modifier.padding(bottom = 5.dp),
+            )
         }
+        Text("REMAINING", style = MaterialTheme.typography.labelSmall, color = PrimaryFixedDim.copy(alpha = 0.6f))
     }
 }
 
 @Composable
-private fun OdometerSection() {
+private fun OdometerSection(todayKm: Float, odometerKm: Float) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -139,7 +105,8 @@ private fun OdometerSection() {
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = "128",
+                // Derived in the app: live odometer minus the day-start reading.
+                text = formatKm(todayKm),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 24.sp, lineHeight = 26.sp),
                 color = OnSurface,
             )
@@ -150,7 +117,7 @@ private fun OdometerSection() {
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = "14,204",
+                text = formatKm(odometerKm),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 24.sp, lineHeight = 26.sp),
                 color = OnSurface,
             )
@@ -159,10 +126,14 @@ private fun OdometerSection() {
     }
 }
 
+/** "14,204"-style grouped formatting; 0 until ODOMETER arrives. */
+private fun formatKm(km: Float): String =
+    String.format(java.util.Locale.US, "%,d", km.roundToInt())
+
 @Composable
-private fun ThrottleSection() {
+private fun ThrottleSection(throttlePct: Float) {
     val segments = 14
-    val litCount = 2 // 15% of 14
+    val litCount = (throttlePct / 100f * segments).roundToInt().coerceIn(0, segments)
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("THROTTLE", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
         Column(
@@ -186,7 +157,7 @@ private fun ThrottleSection() {
                 )
             }
         }
-        Text("15%", style = MaterialTheme.typography.bodySmall, color = Primary)
+        Text("${throttlePct.coerceIn(0f, 100f).roundToInt()}%", style = MaterialTheme.typography.bodySmall, color = Primary)
     }
 }
 
@@ -200,7 +171,14 @@ private fun heatColor(t: Float): Color =
 
 @Composable
 private fun TempSection(snapshot: CarSnapshot) {
-    val fahrenheit = snapshot.climate.tempC * 9 / 5 + 32
+    val tempC = snapshot.climate.tempC
+    val fahrenheit = tempC * 9 / 5 + 32
+    // Status follows the live coolant reading: no data (0) reads as COLD.
+    val (statusLabel, statusColor) = when {
+        tempC < 40 -> "COLD" to PrimaryFixedDim.copy(alpha = 0.6f)
+        tempC < 108 -> "OPTIMAL" to PrimaryFixedDim.copy(alpha = 0.6f)
+        else -> "HOT" to ErrorRed
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("TEMP", style = MaterialTheme.typography.labelSmall, color = OnSurfaceVariant)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -216,6 +194,6 @@ private fun TempSection(snapshot: CarSnapshot) {
                 modifier = Modifier.size(14.dp),
             )
         }
-        Text("OPTIMAL", style = MaterialTheme.typography.labelSmall, color = PrimaryFixedDim.copy(alpha = 0.6f))
+        Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = statusColor)
     }
 }

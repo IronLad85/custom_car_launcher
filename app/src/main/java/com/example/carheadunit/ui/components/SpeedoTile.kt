@@ -51,10 +51,11 @@ import kotlin.math.roundToInt
 
 /** Main speedometer tile: dot-grid decor, big km/h readout, speed/RPM bars, gear, car render. */
 @Composable
-fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
+fun SpeedoTile(speed: SpeedInfo, rpm: Float, modifier: Modifier = Modifier) {
     val kmh = speed.kmh
     val speedFrac = (kmh / 200f).coerceIn(0f, 1f)
-    val rpm = 0.9f + kmh * 0.014f
+    // Real ENGINE_RPM from the USB source (0 until the first frame arrives)
+    val rpmThousands = rpm / 1000f
 
     // Static dot-grid decor: remembered modifier so the ~400-circle pattern
     // draws once and is not re-issued on every 1 Hz telemetry tick.
@@ -188,7 +189,7 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                                     color = OnSurfaceVariant.copy(alpha = 0.8f),
                                 )
                                 Text(
-                                    text = String.format(java.util.Locale.US, "%.1f", rpm),
+                                    text = String.format(java.util.Locale.US, "%.1f", rpmThousands),
                                     style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
                                     color = OnSurface,
                                 )
@@ -201,7 +202,7 @@ fun SpeedoTile(speed: SpeedInfo, modifier: Modifier = Modifier) {
                         // Single Canvas: one continuous ramp gradient, ghosted past the
                         // fill with a soft one-segment leading edge — three draws per
                         // tick instead of 40 gradient-shader boxes.
-                        val rpmFrac = (rpm / 8f).coerceIn(0f, 1f)
+                        val rpmFrac = (rpm / 8000f).coerceIn(0f, 1f)
                         Canvas(
                             modifier = Modifier
                                 .fillMaxWidth()

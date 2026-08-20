@@ -82,27 +82,40 @@ fun NavDock(
                     .fillMaxWidth()
                     .align(Alignment.Center),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceAround,
             ) {
-                if (pinned.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.dock_empty_hint),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = OnSurfaceVariant,
-                    )
-                } else {
-                    pinned.take(MAX_DOCK_ITEMS).forEach { app ->
-                        DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+                // Status chip owns its layout slot at the left — the middle
+                // content centers in the remaining space instead of drawing
+                // underneath it.
+                UsbStatusChip(
+                    state = usbStatus,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (pinned.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.dock_empty_hint),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = OnSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceAround,
+                        ) {
+                            pinned.take(MAX_DOCK_ITEMS).forEach { app ->
+                                DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+                            }
+                        }
                     }
                 }
                 AllAppsItem(active = drawerOpen, onClick = onOpenAllApps)
             }
-            UsbStatusChip(
-                state = usbStatus,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 12.dp),
-            )
         }
     }
 }

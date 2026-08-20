@@ -16,15 +16,16 @@ import java.util.concurrent.Executors
 
 /**
  * Edge telemetry pipeline for the ESP32 CAN data:
- *  1. [sample] buffers signal dumps in memory (cheap, main-thread safe)
+ *  1. [sample]/[frame] buffer signal dumps in memory (cheap, thread-safe)
  *  2. buffers flush to SQLite in batch transactions on a background thread
- *  3. a network callback triggers [uploadPending] — batches POST to the
- *     server and are deleted only after a 2xx ack
+ *  3. uploads trigger on network events, at boot, and on each flush (all
+ *     rate-limited) — batches POST to the server and are deleted only after
+ *     a 2xx ack; after N consecutive failures the loop gives up and waits
+ *     for the next trigger
  *  4. an oldest-first cap keeps the DB bounded during long offline periods
  *
- * Steady-state cost: one small disk write per flush and one HTTP POST per
- * upload window — nothing per message. No polling: network events come from
- * ConnectivityManager callbacks.
+ * Flushes and uploads run on separate single threads: a long upload retry
+ * loop can never block buffered samples from reaching SQLite.
  */
 class TelemetryLogger(context: Context) {
 
@@ -32,8 +33,17 @@ class TelemetryLogger(context: Context) {
     private val db = TelemetryDbHelper(appContext)
     private val executor: Executor = Executors.newSingleThreadExecutor()
 
+    // Separate thread for uploads so a retry loop never delays flushes
+    // (otherwise buffered samples would pile up in RAM).
+    private val uploadExecutor = Executors.newSingleThreadExecutor()
+
     private val buffer = ArrayList<String>()
     private val bufferTs = ArrayList<Long>()
+
+    // Per-frame path: every USB data frame lands here (own buffer + larger
+    // flush batch — frames arrive far more often than the 10 s snapshots).
+    private val frameBuffer = ArrayList<String>()
+    private val frameBufferTs = ArrayList<Long>()
 
     @Volatile
     private var lastUploadAttemptAt = 0L
@@ -82,6 +92,27 @@ class TelemetryLogger(context: Context) {
         }
     }
 
+    /** Called from the USB reader thread for EVERY data frame (timestamps
+     *  captured at parse time). Cheap: buffer add + a batch flush every
+     *  [FRAME_FLUSH_EVERY] frames on the background executor. */
+    fun frame(ts: Long, payload: String) {
+        if (LOG_ONLY) {
+            Log.i(TAG, "Frame[$ts]: $payload")
+            return
+        }
+        synchronized(frameBuffer) {
+            frameBuffer.add(payload)
+            frameBufferTs.add(ts)
+            if (frameBuffer.size >= FRAME_FLUSH_EVERY) {
+                val payloads = ArrayList(frameBuffer)
+                val stamps = ArrayList(frameBufferTs)
+                frameBuffer.clear()
+                frameBufferTs.clear()
+                executor.execute { flushToDb(payloads, stamps) }
+            }
+        }
+    }
+
     /** Flushes whatever is buffered and closes the DB (single-use logger). */
     fun close() {
         executor.execute {
@@ -92,8 +123,18 @@ class TelemetryLogger(context: Context) {
                     bufferTs.clear()
                 }
             }
+            synchronized(frameBuffer) {
+                if (frameBuffer.isNotEmpty()) {
+                    flushToDb(ArrayList(frameBuffer), ArrayList(frameBufferTs))
+                    frameBuffer.clear()
+                    frameBufferTs.clear()
+                }
+            }
             db.close()
         }
+        // In-flight uploads are safe to interrupt: rows are only deleted
+        // after a 2xx ack, so a killed post just leaves them pending.
+        uploadExecutor.shutdownNow()
     }
 
     private fun flushToDb(payloads: List<String>, stamps: List<Long>) {
@@ -108,6 +149,10 @@ class TelemetryLogger(context: Context) {
         try {
             db.insertBatch(payloads, stamps)
             Log.d(TAG, "Stored ${payloads.size} samples (pending=${db.pendingCount()})")
+            // A flush is also a retry trigger: if rows are pending and the
+            // last attempt is old enough (rate-limited in scheduleUpload),
+            // try an upload — recovers without waiting for a network event.
+            scheduleUpload()
         } catch (e: Exception) {
             Log.w(TAG, "DB insert failed", e)
         }
@@ -116,14 +161,16 @@ class TelemetryLogger(context: Context) {
     private fun scheduleUpload() {
         if (LOG_ONLY) return
         val now = System.currentTimeMillis()
-        // Basic rate-limit: at most one upload pass per minute regardless of callbacks
+        // Basic rate-limit: at most one upload pass per interval regardless
+        // of callbacks and flush triggers.
         if (now - lastUploadAttemptAt < MIN_UPLOAD_INTERVAL_MS) return
         lastUploadAttemptAt = now
-        executor.execute { uploadLoop() }
+        uploadExecutor.execute { uploadLoop() }
     }
 
     private fun uploadLoop() {
         var backoff = 5_000L
+        var consecutiveFailures = 0
         while (true) {
             val pending = db.pendingCount()
             if (pending == 0) {
@@ -134,9 +181,19 @@ class TelemetryLogger(context: Context) {
             if (batch.isEmpty()) return
             val ok = post(batch)
             if (ok) {
+                consecutiveFailures = 0
+                backoff = 5_000L
                 db.deleteIds(batch.map { it.first })
                 Log.i(TAG, "Uploaded ${batch.size} samples (remaining=${db.pendingCount()})")
             } else {
+                consecutiveFailures++
+                if (consecutiveFailures >= MAX_UPLOAD_FAILURES) {
+                    // Give up: rows stay in SQLite; the next network event or
+                    // flush re-triggers the upload. Also stops pointless
+                    // spinning on dead networks / wrong endpoints.
+                    Log.w(TAG, "Upload paused after $consecutiveFailures failures — waiting for the next trigger")
+                    return
+                }
                 Log.w(TAG, "Upload failed — retrying in ${backoff / 1000}s")
                 try {
                     Thread.sleep(backoff)
@@ -238,16 +295,24 @@ class TelemetryLogger(context: Context) {
 
     private companion object {
         const val TAG = "TelemetryLogger"
-        // Bench mode: samples go to logcat only (no SQLite, no HTTP).
-        // Flip to false when the real telemetry endpoint is in use.
-        const val LOG_ONLY = true
+        // Normal mode: samples buffer to SQLite and upload on network events.
+        // Flip to true for bench mode (logcat only, no SQLite, no HTTP).
+        const val LOG_ONLY = false
         // TODO: replace with your server endpoint
         const val ENDPOINT = "https://telemetry.example.com/api/ingest"
         const val DEVICE_ID = "headunit-001"
         const val FLUSH_EVERY_SAMPLES = 10
+        // Frames arrive at up to ~50/s (firmware 20 ms flush) — batch larger
+        // so SQLite sees one small transaction every few seconds, not 50/s.
+        const val FRAME_FLUSH_EVERY = 200
         const val BATCH_SIZE = 50
         const val MIN_UPLOAD_INTERVAL_MS = 30_000L
         const val MAX_BACKOFF_MS = 300_000L
-        const val MAX_ROWS = 200_000
+        // Consecutive failed POSTs before the upload loop gives up and waits
+        // for the next trigger (network event or flush).
+        const val MAX_UPLOAD_FAILURES = 5
+        // 2M rows ≈ several days of per-frame data at driving rates; uploads
+        // on daily WiFi drain it long before the cap. Tune if needed.
+        const val MAX_ROWS = 2_000_000
     }
 }

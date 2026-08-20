@@ -94,6 +94,7 @@ fun Dashboard(
                 ) {
                     SpeedoTile(
                         speed = snapshot.speed,
+                        rpm = snapshot.rpm,
                         modifier = Modifier
                             .weight(7f)
                             .fillMaxHeight()

@@ -14,18 +14,22 @@ data class MediaInfo(
 /** One frame of car telemetry shown in the top cards. */
 data class CarSnapshot(
     val speed: SpeedInfo = SpeedInfo(kmh = 0),
-    val climate: ClimateInfo = ClimateInfo(tempC = 22, fanLevel = 4),
-    val media: MediaInfo = MediaInfo(trackTitle = "Midnight Drive", artist = "Neon Skyline", isPlaying = true),
-    // ESP32 telemetry (defaults keep the design's static look when offline)
-    val power: Float = 0.42f,              // 0..1 derived: throttle × rpm/redline
-    val steeringFraction: Float = 0.65f,   // 0..1 across the steering track
+    val climate: ClimateInfo = ClimateInfo(tempC = 0, fanLevel = 0),
+    val media: MediaInfo = MediaInfo(trackTitle = "Nothing playing", artist = "Start music on your phone", isPlaying = false),
+    // ESP32 telemetry. Every value stays at its zero state until the USB
+    // source reports the corresponding signal — no mock readings.
+    val rpm: Float = 0f,                  // ENGINE_RPM in rpm
+    val throttle: Float = 0f,             // THROTTLE in %
+    val odometerKm: Float = 0f,           // ODOMETER in km
+    val todayKm: Float = 0f,              // derived in the app: odometer − day-start baseline
+    val steeringFraction: Float = 0.5f,   // 0..1 across the steering track; 0.5 = centered (no data)
     val highBeam: Boolean = false,
     val turnLeftLamp: Boolean = false,
     val turnRightLamp: Boolean = false,
     val fogLight: Boolean = false,
     val chargeWarning: Boolean = false,
-    val fuelLevel: Float = 1f,             // 0..1
-    val batteryVoltage: Float = 12f,
+    val fuelLevel: Float = 0f,            // litres (0..126, 1 L resolution)
+    val batteryVoltage: Float = 0f,
 )
 
 /**

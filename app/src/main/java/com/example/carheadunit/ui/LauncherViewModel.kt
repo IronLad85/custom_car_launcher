@@ -18,6 +18,7 @@ import com.example.carheadunit.data.MediaInfo
 import com.example.carheadunit.data.MediaNotificationHolder
 import com.example.carheadunit.data.MediaNotificationService
 import com.example.carheadunit.data.TelemetryLogger
+import com.example.carheadunit.data.TodayKmTracker
 import com.example.carheadunit.data.UsbEsp32DataSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -38,6 +39,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val usbStatus = usbSource.status
 
     private val telemetryLogger = TelemetryLogger(application)
+
+    // "Today km" is derived in the app: live odometer minus the persisted
+    // day-start reading (no trip signal on this CAN bus).
+    private val todayKmTracker = TodayKmTracker(application)
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -63,6 +68,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     init {
+        // Log EVERY USB data frame (per-frame timestamps + changed signals),
+        // not just the 10 s snapshots — full-resolution data for analysis.
+        usbSource.frameListener = { ts, payload -> telemetryLogger.frame(ts, payload) }
         refreshApps()
         refreshMediaAccess()
         // Live now-playing: rebuild the media part of the snapshot the moment a
@@ -72,11 +80,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 _snapshot.value = _snapshot.value.copy(media = mediaInfo())
             }
         }
-        // Simulated telemetry tick
+        // Live telemetry tick: USB source when connected, static zeros offline.
         viewModelScope.launch {
             var tickCount = 0
             while (isActive) {
-                _snapshot.value = dataSource.snapshot().copy(media = mediaInfo())
+                val snap = dataSource.snapshot()
+                _snapshot.value = snap.copy(
+                    media = mediaInfo(),
+                    todayKm = todayKmTracker.todayKm(snap.odometerKm),
+                )
                 tickCount++
                 // Log ALL received signals every 10 s (interval, not per message)
                 if (tickCount % LOG_SAMPLE_TICKS == 0) {

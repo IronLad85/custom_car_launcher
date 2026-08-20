@@ -16,6 +16,7 @@ import android.util.Log
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -85,6 +86,21 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private var registryTotal = 0
     private var registryRequested = false
 
+    /** Invoked on the USB reader thread for every data frame the device sends:
+     *  (capture epoch-ms, compact JSON of that frame's changed signals).
+     *  Recording filter: EXCLUDED_SIGNALS are never logged; ENGINE_RPM and
+     *  SPEED are deadbanded (10 s minimum interval, immediate on big jumps).
+     *  Empty heartbeat frames are skipped. Wired by the ViewModel. */
+    @Volatile
+    var frameListener: ((Long, String) -> Unit)? = null
+
+    // Deadband state for high-rate signals (USB reader thread only):
+    // store at most once per MIN_INTERVAL unless the value jumps ≥ MIN_DELTA.
+    private var lastRpmLogged = Float.NaN
+    private var lastRpmLogAt = 0L
+    private var lastSpeedLogged = Float.NaN
+    private var lastSpeedLogAt = 0L
+
     private val usbManager: UsbManager
         get() = context.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -149,6 +165,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
     /** Release everything; the data source is single-use. */
     fun close() {
+        frameListener = null
         disconnect()
         runCatching { context.unregisterReceiver(receiver) }
         retryExecutor.shutdownNow()
@@ -166,9 +183,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         if (!connected) return null
         val values: Map<String, Float> = synchronized(signalValues) { HashMap(signalValues) }
         val sb = StringBuilder("{")
-        values.entries.forEachIndexed { i, (name, value) ->
-            if (i > 0) sb.append(',')
+        var count = 0
+        for ((name, value) in values) {
+            if (name in EXCLUDED_SIGNALS) continue
+            if (count > 0) sb.append(',')
             sb.append('"').append(name).append("\":").append(value)
+            count++
         }
         sb.append("}")
         return sb.toString()
@@ -316,6 +336,11 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         parser.reset()
         signalMeta.clear()
         synchronized(signalValues) { signalValues.clear() }
+        // Fresh session: the first RPM/SPEED values pass the deadband.
+        lastRpmLogged = Float.NaN
+        lastRpmLogAt = 0L
+        lastSpeedLogged = Float.NaN
+        lastSpeedLogAt = 0L
     }
 
     private fun writeCommand(cmd: Int) {
@@ -430,6 +455,9 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             dataSeen = true
             _status.value = UsbLinkState.DATA
         }
+        val ts = System.currentTimeMillis()
+        val listener = frameListener
+        val frameJson = if (listener != null) buildFrameJson(pairs, ts) else null
         synchronized(signalValues) {
             for (p in pairs) {
                 val pair = p as? List<*> ?: continue
@@ -442,29 +470,71 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
                 signalValues[meta.name] = raw
             }
         }
+        if (listener != null && frameJson != null) listener(ts, frameJson)
+    }
+
+    /** Compact JSON of one frame's changed signals, e.g. {"SPEED":42.5,...}.
+     *  EXCLUDED_SIGNALS are dropped; RPM/SPEED pass a deadband (see below). */
+    private fun buildFrameJson(pairs: List<*>, ts: Long): String? {
+        val sb = StringBuilder("{")
+        var count = 0
+        for (p in pairs) {
+            val pair = p as? List<*> ?: continue
+            val index = (pair.getOrNull(0) as? Number)?.toLong() ?: continue
+            val raw = (pair.getOrNull(1) as? Number)?.toFloat() ?: continue
+            val name = signalMeta[index]?.name ?: "i$index"
+            if (name in EXCLUDED_SIGNALS) continue
+            if (name == "ENGINE_RPM" && !worthLogging(raw, ts, rpm = true)) continue
+            if (name == "SPEED" && !worthLogging(raw, ts, rpm = false)) continue
+            if (count > 0) sb.append(',')
+            sb.append('"').append(name).append("\":").append(raw)
+            count++
+        }
+        if (count == 0) return null
+        sb.append("}")
+        return sb.toString()
+    }
+
+    /** Deadband gate: true when ≥10 s since the last store or the value jumped
+     *  ≥200 rpm / ≥4 km/h. Stores update the last-value state. */
+    private fun worthLogging(value: Float, ts: Long, rpm: Boolean): Boolean {
+        val lastValue = if (rpm) lastRpmLogged else lastSpeedLogged
+        val lastAt = if (rpm) lastRpmLogAt else lastSpeedLogAt
+        val delta = if (rpm) RPM_MIN_DELTA else SPEED_MIN_DELTA
+        // NaN-safe: abs(NaN) comparisons are false, so the first sample of a
+        // session passes via the interval rule (lastAt = 0).
+        val bigJump = abs(value - lastValue) >= delta
+        val intervalElapsed = ts - lastAt >= DEADBAND_MIN_INTERVAL_MS
+        if (!bigJump && !intervalElapsed) return false
+        if (rpm) {
+            lastRpmLogged = value
+            lastRpmLogAt = ts
+        } else {
+            lastSpeedLogged = value
+            lastSpeedLogAt = ts
+        }
+        return true
     }
 
     private fun buildSnapshot(values: Map<String, Float>): CarSnapshot {
         fun v(name: String, default: Float = 0f) = values[name] ?: default
         fun lit(name: String) = v(name) >= 0.5f
-        // Derived power: P ≈ torque × rpm, torque ≈ throttle (first-order).
-        // Accepts both normalized (0..1) and real units (% / RPM) from the firmware.
-        val throttle = v("THROTTLE")
-        val rpm = v("ENGINE_RPM")
-        val throttleFrac = (if (throttle > 1f) throttle / 100f else throttle).coerceIn(0f, 1f)
-        val rpmFrac = (if (rpm > 1f) rpm / 8000f else rpm).coerceIn(0f, 1f)
-        val power = if (v("BRAKE_PRESSURE") > 0.5f) 0f else (throttleFrac * rpmFrac).coerceIn(0f, 1f)
+        // Steering: the field is unsigned |angle| with a separate sign bit
+        // (1 = negative). Fold the sign back in before mapping to the track.
+        val steerSigned = v("LW1_STEERING_ANGLE") * if (v("LW1_STEER_ANG_SIGN") >= 0.5f) -1f else 1f
         return CarSnapshot(
             speed = SpeedInfo(kmh = v("SPEED").roundToInt()),
-            power = power,
-            climate = ClimateInfo(tempC = v("COOLANT_TEMP").roundToInt(), fanLevel = 4),
-            steeringFraction = ((v("LW1_STEERING_ANGLE") / 45f).coerceIn(-1f, 1f) + 1f) / 2f,
+            rpm = v("ENGINE_RPM"),
+            throttle = v("THROTTLE"),
+            odometerKm = v("ODOMETER"),
+            climate = ClimateInfo(tempC = v("COOLANT_TEMP").roundToInt(), fanLevel = 0),
+            steeringFraction = ((steerSigned / 45f).coerceIn(-1f, 1f) + 1f) / 2f,
             highBeam = lit("HIGH_BEAM"),
             turnLeftLamp = lit("TURN_LEFT_LAMP"),
             turnRightLamp = lit("TURN_RIGHT_LAMP"),
             fogLight = lit("FOG_LIGHT"),
             chargeWarning = lit("CHARGE_WARNING"),
-            fuelLevel = v("FUEL_LEVEL").coerceIn(0f, 1f),
+            fuelLevel = v("FUEL_LEVEL"), // litres (0..126, 1 L resolution) — keep raw for analysis
             batteryVoltage = v("BATTERY_VOLTAGE"),
         )
     }
@@ -498,5 +568,16 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
         // for lost entries a safe margin after the first entry arrives.
         const val REGISTRY_GRACE_MS = 1_500L
+        // Recording filter: these signals never reach the DB (too noisy for
+        // the analysis; they still drive the UI).
+        val EXCLUDED_SIGNALS = setOf(
+            "MO5_CONSUMPTION", "BATTERY_VOLTAGE", "COOLANT_TEMP",
+            "LW1_STEERING_ANGLE", "LW1_STEER_ANG_SIGN", "BRAKE_PRESSURE",
+        )
+        // Deadband for ENGINE_RPM / SPEED: at most one frame entry per
+        // interval, unless the value jumps by the delta (then immediately).
+        const val DEADBAND_MIN_INTERVAL_MS = 10_000L
+        const val RPM_MIN_DELTA = 200f
+        const val SPEED_MIN_DELTA = 4f
     }
 }
