@@ -89,6 +89,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     // the device drops packets), a delayed check asks for a re-send.
     private var registryTotal = 0
     private var registryRequested = false
+    private var registryReRequested = false
 
     /** Invoked on the USB reader thread for every data frame the device sends:
      *  (capture epoch-ms, compact JSON of that frame's changed signals).
@@ -376,6 +377,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         dataSeen = false
         registryTotal = 0
         registryRequested = false
+        registryReRequested = false
         parser.reset()
         signalMeta.clear()
         synchronized(signalValues) { signalValues.clear() }
@@ -410,8 +412,11 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         synchronized(this) {
             retryTask?.cancel(false)
             if (retryAttempt >= MAX_RETRY_ATTEMPTS) {
-                Log.i(TAG, "USB reconnect gave up after $MAX_RETRY_ATTEMPTS attempts")
-                _status.value = UsbLinkState.FAILED
+                // Fixed install: keep retrying slowly in the background —
+                // the device may come back without firing attach events.
+                Log.i(TAG, "USB reconnect: background retry every ${RETRY_BG_DELAY_MS / 1000}s")
+                _status.value = UsbLinkState.RETRYING
+                retryTask = retryExecutor.schedule({ connect() }, RETRY_BG_DELAY_MS, TimeUnit.MILLISECONDS)
                 return
             }
             if (retryAttempt == 0) _status.value = UsbLinkState.RETRYING
@@ -546,6 +551,15 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         if (registryCount % 32 == 0) {
             Log.i(TAG, "Registry complete: $registryCount signals")
         }
+        // After a registry re-send ('R'), trigger a snapshot refresh once the
+        // registry is complete: the device's original snapshot arrived before
+        // the registry and its index-based values were skipped — slow-changing
+        // signals (fuel, odometer) would stay at 0 until the next reconnect.
+        if (registryReRequested && registryTotal > 0 && registryCount >= registryTotal) {
+            registryReRequested = false
+            Log.i(TAG, "Registry re-send complete — requesting snapshot refresh")
+            writeExecutor.execute { writeCommand(CMD_START) }
+        }
     }
 
     /** Sends 'R' (registry re-send) if this session has no usable registry:
@@ -555,6 +569,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         if (!connected || registryRequested) return
         if (!registrySeen || (registryTotal > 0 && registryCount < registryTotal)) {
             registryRequested = true
+            registryReRequested = true
             Log.w(TAG, "Registry missing/incomplete ($registryCount/$registryTotal) — requesting re-send")
             registryCount = 0
             writeExecutor.execute { writeCommand(CMD_REGISTRY) }
@@ -701,6 +716,9 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         const val READ_FAILURE_LIMIT = 15
         const val RETRY_BASE_DELAY_MS = 10_000L
         const val RETRY_MAX_DELAY_MS = 60_000L
+        // After the 5-attempt episode, keep probing at this slow cadence
+        // instead of giving up entirely.
+        const val RETRY_BG_DELAY_MS = 60_000L
         // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
         // for lost entries a safe margin after the first entry arrives.
         const val REGISTRY_GRACE_MS = 1_500L

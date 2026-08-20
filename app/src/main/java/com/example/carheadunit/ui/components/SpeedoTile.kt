@@ -95,9 +95,9 @@ fun SpeedoTile(speed: SpeedInfo, rpm: Float, modifier: Modifier = Modifier) {
                     val compact = maxHeight < 150.dp
                     // Readout scales with the tile: design 64px on tall screens
                     val readoutSize = when {
-                        compact -> 46
-                        maxHeight < 280.dp -> 72
-                        else -> 96
+                        compact -> 36
+                        maxHeight < 280.dp -> 56
+                        else -> 72
                     }
                     val readoutStyle = androidx.compose.material3.MaterialTheme.typography.displayLarge
                         .copy(
@@ -190,7 +190,8 @@ fun SpeedoTile(speed: SpeedInfo, rpm: Float, modifier: Modifier = Modifier) {
                             )
                             Text(
                                 text = String.format(java.util.Locale.US, "%.1f", rpmThousands),
-                                style = androidx.compose.material3.MaterialTheme.typography.displayMedium,
+                                style = androidx.compose.material3.MaterialTheme.typography.displayMedium
+                                    .copy(fontSize = 22.sp, lineHeight = 24.sp),
                                 color = OnSurface,
                             )
                         }
