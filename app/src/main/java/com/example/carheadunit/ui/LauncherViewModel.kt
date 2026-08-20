@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.AppsRepository
 import com.example.carheadunit.data.CarDataSource
+import com.example.carheadunit.data.ChimePlayer
 import com.example.carheadunit.data.CarSnapshot
 import com.example.carheadunit.data.MediaActionType
 import com.example.carheadunit.data.MediaInfo
@@ -43,6 +44,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // "Today km" is derived in the app: live odometer minus the persisted
     // day-start reading (no trip signal on this CAN bus).
     private val todayKmTracker = TodayKmTracker(application)
+
+    // Turn-signal tick-tock: one chime per lamp rising edge (also serves as
+    // the hazard click — both lamps blink together).
+    private val chimePlayer = ChimePlayer(application)
+    private var indicatorsOn = false
+    private var lastChimeAt = 0L
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -89,6 +96,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     media = mediaInfo(),
                     todayKm = todayKmTracker.todayKm(snap.odometerKm),
                 )
+                // Indicator chime on the lamp rising edge (debounced).
+                val indOn = snap.turnLeftLamp || snap.turnRightLamp
+                if (indOn && !indicatorsOn) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastChimeAt >= CHIME_MIN_INTERVAL_MS) {
+                        lastChimeAt = now
+                        chimePlayer.indicatorTick()
+                    }
+                }
+                indicatorsOn = indOn
                 tickCount++
                 // Log ALL received signals every 10 s (interval, not per message)
                 if (tickCount % LOG_SAMPLE_TICKS == 0) {
@@ -116,6 +133,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         getApplication<Application>().unregisterReceiver(packageReceiver)
         usbSource.close()
         telemetryLogger.close()
+        chimePlayer.release()
         super.onCleared()
     }
 
@@ -207,5 +225,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         const val TICK_MS = 128L
         // Telemetry sampling stays at 10 s: 10 s / 128 ms ≈ 78 ticks.
         const val LOG_SAMPLE_TICKS = 78
+        // Indicator chimes are edge-triggered per blink; debounce guards
+        // against flapping lamp signals turning into a beep storm.
+        const val CHIME_MIN_INTERVAL_MS = 250L
     }
 }
