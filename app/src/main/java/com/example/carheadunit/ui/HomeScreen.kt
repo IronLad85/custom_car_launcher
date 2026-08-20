@@ -11,11 +11,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.CarSnapshot
@@ -29,14 +31,17 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * NovaLink OS dashboard home: solid charcoal base with an ambient cyan glow,
- * the dashboard (indicators/steering/speed/metrics/nav/media) or the all-apps
- * drawer on top, and the persistent app dock.
+ * the dashboard (indicators/steering/speed/metrics/nav/media) with the
+ * all-apps drawer over it, and the persistent app dock.
  *
- * Performance note for low-end head units: the 1 Hz telemetry flow is
- * collected inside [Dashboard], which is only composed while the drawer is
- * closed. Opening the drawer stops the telemetry tick from recomposing the
- * grid. The ambient glow is a remembered modifier — it draws once and is not
- * re-shaded on recomposition.
+ * Performance notes for low-end head units:
+ *  - The drawer is composed ONCE at startup and stays composed (alpha 0
+ *    draws nothing), so opening it is instant instead of paying the full
+ *    first-composition cost on tap.
+ *  - The telemetry flow is collected inside [Dashboard]; while the drawer is
+ *    open it is swapped for a static flow, so the tick recomposes nothing
+ *    under the scrolling grid.
+ *  - The ambient glow is a remembered modifier — drawn once, not re-shaded.
  */
 @Composable
 fun HomeScreen(
@@ -81,28 +86,32 @@ fun HomeScreen(
             .background(SurfaceBg)
             .then(glowModifier),
     ) {
-        if (drawerOpen) {
-            AllAppsScreen(
-                apps = apps,
-                pinned = pinnedSet,
-                onLaunch = onLaunch,
-                onTogglePin = onTogglePin,
-                onClose = onCloseDrawer,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(bottom = 74.dp),
-            )
-        } else {
-            Dashboard(
-                snapshotFlow = snapshotFlow,
-                mediaAccess = mediaAccess,
-                onTogglePlayback = onTogglePlayback,
-                onNextTrack = onNextTrack,
-                onPrevTrack = onPrevTrack,
-                onRequestMediaAccess = onRequestMediaAccess,
-            )
-        }
+        Dashboard(
+            snapshotFlow = snapshotFlow,
+            active = !drawerOpen,
+            mediaAccess = mediaAccess,
+            onTogglePlayback = onTogglePlayback,
+            onNextTrack = onNextTrack,
+            onPrevTrack = onPrevTrack,
+            onRequestMediaAccess = onRequestMediaAccess,
+            modifier = Modifier.zIndex(1f),
+        )
+        // Pre-warmed drawer: composed once at startup and kept composed —
+        // zIndex puts it below the dashboard while closed (no touch
+        // pass-through) and above when open; alpha 0 draws nothing.
+        AllAppsScreen(
+            apps = apps,
+            pinned = pinnedSet,
+            onLaunch = onLaunch,
+            onTogglePin = onTogglePin,
+            onClose = onCloseDrawer,
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = 74.dp)
+                .zIndex(if (drawerOpen) 2f else 0f)
+                .alpha(if (drawerOpen) 1f else 0f),
+        )
         NavDock(
             pinned = pinnedApps,
             drawerOpen = drawerOpen,
@@ -110,7 +119,9 @@ fun HomeScreen(
             onLaunch = onLaunch,
             onUnpin = onTogglePin,
             onOpenAllApps = onOpenAllApps,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(3f),
         )
     }
 }

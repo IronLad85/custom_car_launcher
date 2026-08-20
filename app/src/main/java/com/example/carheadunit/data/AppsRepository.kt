@@ -28,9 +28,8 @@ class AppsRepository(private val context: Context) {
         return infos
             .mapNotNull { info -> info.toEntry(pm) }
             .filter { it.packageName != context.packageName }
-            // One tile per app: queryIntentActivities lists every launchable activity,
-            // so keep the first (default) entry per package.
-            .distinctBy { it.packageName }
+            // One tile per launcher activity (like the system launcher): apps
+            // such as Android Auto expose several entries.
             .sortedWith(compareBy(Collator.getInstance()) { it.label.lowercase() })
     }
 

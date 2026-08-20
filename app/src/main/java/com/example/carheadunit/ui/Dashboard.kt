@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.carheadunit.data.CarSnapshot
@@ -25,19 +26,21 @@ import com.example.carheadunit.ui.components.MediaTile
 import com.example.carheadunit.ui.components.MetricsTile
 import com.example.carheadunit.ui.components.SpeedoTile
 import com.example.carheadunit.ui.components.SteeringTrack
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Dashboard content (indicators, steering, speed/metrics, nav/media).
  *
- * Collects the 1 Hz telemetry flow internally instead of receiving the value
- * from the screen root: when the app drawer is open this composable is not
- * composed, so the telemetry tick recomposes nothing — the drawer grid stays
- * untouched on low-end head-unit SoCs.
+ * Collects the telemetry flow internally instead of receiving the value from
+ * the screen root. While the app drawer is open ([active] = false) the flow
+ * is swapped for a static one, so the tick recomposes nothing under the
+ * scrolling grid on low-end head-unit SoCs.
  */
 @Composable
 fun Dashboard(
     snapshotFlow: StateFlow<CarSnapshot>,
+    active: Boolean = true,
     mediaAccess: Boolean,
     onTogglePlayback: () -> Unit,
     onNextTrack: () -> Unit,
@@ -45,7 +48,13 @@ fun Dashboard(
     onRequestMediaAccess: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val snapshot by snapshotFlow.collectAsState()
+    // Frozen while the drawer is open: a static flow holding the last value.
+    val collected = if (active) {
+        snapshotFlow
+    } else {
+        remember(snapshotFlow) { MutableStateFlow(snapshotFlow.value) }
+    }
+    val snapshot by collected.collectAsState()
     Column(
         modifier = modifier
             .fillMaxSize()

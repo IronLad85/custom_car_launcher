@@ -20,9 +20,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -32,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,7 +91,7 @@ fun AllAppsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
+            items(apps, key = { app -> app.packageName + "/" + app.activityName }) { app ->
                 // Stable per-item lambdas: when only `pinned` changes, every
                 // tile whose pin state is unchanged skips recomposition.
                 val launchThis = remember(app) { { onLaunch(app) } }
@@ -101,7 +99,6 @@ fun AllAppsScreen(
                 AppTile(
                     app = app,
                     isPinned = app.packageName in pinned,
-                    rowIndex = index / 6,
                     onLaunch = launchThis,
                     onTogglePin = toggleThis,
                 )
@@ -115,36 +112,24 @@ fun AllAppsScreen(
 private fun AppTile(
     app: AppEntry,
     isPinned: Boolean,
-    rowIndex: Int,
     onLaunch: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
-    val iconSize = when (rowIndex) {
-        2 -> 40.dp
-        3 -> 58.dp
-        else -> 48.dp
-    }
-
+    // Plain tile (no glass decoration): icon + label only — the cheapest
+    // possible draw on software-rendered SoCs.
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(GlassFill)
-            .border(
-                width = 1.dp,
-                color = if (isPinned) PrimaryContainer.copy(alpha = 0.6f) else GlassBorder,
-                shape = RoundedCornerShape(14.dp),
-            )
             .combinedClickable(onClick = onLaunch, onLongClick = onTogglePin)
-            .padding(vertical = if (rowIndex == 2) 12.dp else 16.dp, horizontal = 8.dp),
+            .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Image(
             bitmap = app.icon,
             contentDescription = app.label,
-            modifier = Modifier.size(iconSize),
+            modifier = Modifier.size(64.dp),
         )
-        Spacer(Modifier.height(if (rowIndex == 3) 10.dp else 8.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             text = app.label,
             style = MaterialTheme.typography.labelMedium,
