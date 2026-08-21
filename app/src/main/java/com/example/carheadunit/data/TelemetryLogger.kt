@@ -504,8 +504,8 @@ class TelemetryLogger(context: Context) {
         // Normal mode: frames buffer to SQLite and upload on network events.
         // Flip to true for bench mode (logcat only, no SQLite, no HTTP).
         const val LOG_ONLY = false
-        // TODO: point at your Car Telemetry Server
-        const val BASE_URL = "http://192.168.1.100:3000"
+        // Car Telemetry Server base URL (no path prefix).
+        const val BASE_URL = "https://car-data-server.techstark.in"
         // Must match the server's DEVICE_API_TOKEN env (exact string match).
         const val DEVICE_API_TOKEN = "c236a4e1e5bee1e2d229b627c8e51158000844543d0873811ff0933dac9be7a6"
         const val DEVICE_ID = "headunit-001"
