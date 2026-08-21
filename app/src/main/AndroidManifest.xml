@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Location: GPS fixes from the head unit's receiver attach to telemetry
+         rows at recording time. Requested at runtime on launch; the pipeline
+         works without it (samples just omit GPS). -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <!-- Declares compatibility with automotive devices; not required to install elsewhere. -->
     <uses-feature
         android:name="android.hardware.type.automotive"

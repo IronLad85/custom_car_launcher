@@ -606,8 +606,6 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     private fun buildFrameJson(pairs: List<*>, ts: Long): String? {
         val sb = StringBuilder("{")
         var count = 0
-        var hasSteerAngle = false
-        var hasSteerSign = false
         for (p in pairs) {
             val pair = p as? List<*> ?: continue
             val index = (pair.getOrNull(0) as? Number)?.toLong() ?: continue
@@ -615,28 +613,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
             val name = signalMeta[index]?.name ?: "i$index"
             if (name in EXCLUDED_SIGNALS) continue
             if (name == "ENGINE_RPM" && !worthLogging(raw, ts)) continue
-            if (name == "LW1_STEERING_ANGLE") hasSteerAngle = true
-            if (name == "LW1_STEER_ANG_SIGN") hasSteerSign = true
             if (count > 0) sb.append(',')
             sb.append('"').append(name).append("\":").append(raw)
             count++
         }
         if (count == 0) return null
-        // Steering composite: the sign bit only changes when the wheel crosses
-        // center, so frames carrying the angle almost never carry the sign.
-        // Append the current sign so each stored frame is self-contained for
-        // the server. (Read pre-update is correct: a sign that changed THIS
-        // frame is already in pairs and skips this append.)
-        if (hasSteerAngle && !hasSteerSign) {
-            sb.append(",\"LW1_STEER_ANG_SIGN\":").append(currentSteerSign())
-        }
         sb.append("}")
         return sb.toString()
     }
-
-    /** Latest LW1_STEER_ANG_SIGN; 0 (left) before the first report. */
-    private fun currentSteerSign(): Float =
-        synchronized(signalValues) { signalValues["LW1_STEER_ANG_SIGN"] ?: 0f }
 
     /** RPM deadband gate: true when ≥10 s since the last store or the value
      *  jumped ≥200 rpm. Stores update the last-value state. */
@@ -713,10 +697,19 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
         // for lost entries a safe margin after the first entry arrives.
         const val REGISTRY_GRACE_MS = 1_500L
-        // Recording filter: these signals never reach the DB. The server's
-        // trip stats need consumption/temps/voltage/steering, so only
-        // BRAKE_PRESSURE stays out (no API field for it).
-        val EXCLUDED_SIGNALS = setOf("BRAKE_PRESSURE")
+        // Recording filter: these signals never reach the DB (and therefore
+        // never the server). Trip stats only need the numeric drive signals,
+        // consumption, temps and voltage; lamp/indicator/brake/steering
+        // state is noise — all stay out.
+        val EXCLUDED_SIGNALS = setOf(
+            "BRAKE_PRESSURE", "BRAKE_LIGHT",
+            "TURN_LEFT", "TURN_RIGHT",
+            "TURN_LEFT_LAMP", "TURN_RIGHT_LAMP",
+            "HAZARD_MODE",
+            "REVERSE_LIGHT", "LOW_BEAM", "HIGH_BEAM",
+            "FOG_LIGHT", "CHARGE_WARNING",
+            "LW1_STEERING_ANGLE", "LW1_STEER_ANG_SIGN",
+        )
         // Deadband for ENGINE_RPM: at most one frame entry per interval,
         // unless the value jumps by the delta (then immediately).
         const val DEADBAND_MIN_INTERVAL_MS = 10_000L

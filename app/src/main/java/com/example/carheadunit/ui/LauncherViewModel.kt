@@ -153,6 +153,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         refreshMediaAccess()
     }
 
+    /** Routes the runtime location-permission result back to the logger so
+     *  GPS tracking can start (the init-time attempt fails while the
+     *  permission dialog is still pending). */
+    fun onLocationPermissionResult(granted: Boolean) {
+        if (granted) telemetryLogger.onLocationPermissionGranted()
+    }
+
     fun refreshMediaAccess() {
         val app = getApplication<Application>()
         val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager

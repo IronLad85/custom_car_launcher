@@ -102,20 +102,55 @@ class TelemetryApiTest {
         assertEquals(Instant.ofEpochMilli(ms).toString(), s.getString("ts"))
     }
 
+    // ---- GPS attachment ----
+
+    @Test
+    fun toSample_attachesGpsWhenFixPresent() {
+        val s = TelemetryApi.toSample(
+            """{"SPEED":12.0}""",
+            0L,
+            lat = 48.137,
+            lon = 11.576,
+            alt = 519.0,
+        )
+        assertEquals(48.137, s.getDouble("latitude"), 1e-9)
+        assertEquals(11.576, s.getDouble("longitude"), 1e-9)
+        assertEquals(519.0, s.getDouble("altitudeM"), 1e-9)
+    }
+
+    @Test
+    fun toSample_omitsGpsWhenFixAbsentOrPartial() {
+        val noFix = TelemetryApi.toSample("""{"SPEED":12.0}""", 0L)
+        assertFalse(noFix.has("latitude"))
+        assertFalse(noFix.has("longitude"))
+        assertFalse(noFix.has("altitudeM"))
+        // Lat+lon attach as a pair; a half-fix attaches neither. Altitude
+        // can ride along only with the pair (Location always has lat/lon).
+        val half = TelemetryApi.toSample("""{"SPEED":12.0}""", 0L, lat = 48.137)
+        assertFalse(half.has("latitude"))
+        assertFalse(half.has("longitude"))
+        val noAlt = TelemetryApi.toSample("""{"SPEED":12.0}""", 0L, lat = 48.137, lon = 11.576)
+        assertEquals(48.137, noAlt.getDouble("latitude"), 1e-9)
+        assertFalse(noAlt.has("altitudeM"))
+    }
+
     // ---- bulkBody ----
 
     @Test
     fun bulkBody_buildsSessionAndSamplesArray() {
         val rows = listOf(
-            1L to """{"SPEED":10.0}""",
-            2L to """{"ENGINE_RPM":1000.0}""",
+            TelemetryApi.TelemetryRow(1L, """{"SPEED":10.0}""", null, null, null),
+            TelemetryApi.TelemetryRow(2L, """{"ENGINE_RPM":1000.0}""", 48.137, 11.576, 519.0),
         )
         val o = JSONObject(TelemetryApi.bulkBody(42L, rows))
         assertEquals(42L, o.getLong("sessionId"))
         val samples = o.getJSONArray("samples")
         assertEquals(2, samples.length())
         assertEquals(10, samples.getJSONObject(0).getInt("speedKmh"))
+        assertFalse(samples.getJSONObject(0).has("latitude"))
         assertEquals(1000, samples.getJSONObject(1).getInt("engineRpm"))
+        assertEquals(48.137, samples.getJSONObject(1).getDouble("latitude"), 1e-9)
+        assertEquals(519.0, samples.getJSONObject(1).getDouble("altitudeM"), 1e-9)
     }
 
     // ---- startBody / parseSessionId / errorMessage ----

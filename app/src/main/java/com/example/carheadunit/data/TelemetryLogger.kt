@@ -17,7 +17,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Edge telemetry pipeline for the ESP32 CAN data:
- *  1. per-frame signal dumps buffer in memory (cheap, thread-safe)
+ *  1. per-frame signal dumps + the current GPS fix buffer in memory (cheap,
+ *     thread-safe; the fix is captured at recording time so offline uploads
+ *     never stamp old rows with a newer position)
  *  2. buffers flush to SQLite in batch transactions on a background thread
  *  3. uploads trigger on network events, at boot, and on each flush (all
  *     rate-limited) — batches POST to the Car Telemetry Server and are
@@ -45,10 +47,12 @@ class TelemetryLogger(context: Context) {
     // (otherwise buffered frames would pile up in RAM).
     private val uploadExecutor = Executors.newSingleThreadExecutor()
 
+    // GPS fixes attached to rows at recording time (10 s refresh cadence).
+    private val gps = GpsProvider(appContext)
+
     // Per-frame path: every USB data frame lands here (buffered, flushed in
     // batch transactions; frames arrive far more often than the flush size).
-    private val frameBuffer = ArrayList<String>()
-    private val frameBufferTs = ArrayList<Long>()
+    private val frameBuffer = ArrayList<BufferedFrame>()
 
     // Server session for rows recorded by THIS process run; 0 until started.
     // Written only on the upload thread, read by the flush thread when
@@ -77,13 +81,22 @@ class TelemetryLogger(context: Context) {
     init {
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         cm.registerDefaultNetworkCallback(networkCallback)
+        gps.start()
         // Try once at boot in case the network is already up
         scheduleUpload()
         Log.i(TAG, "Telemetry logger started (baseUrl=$BASE_URL)")
     }
 
+    /** Re-attempts GPS start after the runtime location permission result
+     *  lands (the init attempt fails while the dialog is still pending);
+     *  no-op if tracking is already running. */
+    fun onLocationPermissionGranted() {
+        gps.start()
+    }
+
     /** Called from the USB reader thread for EVERY data frame (timestamps
-     *  captured at parse time). Cheap: buffer add + a batch flush every
+     *  captured at parse time; the GPS fix is captured here too so it matches
+     *  the frame's recording moment). Cheap: buffer add + a batch flush every
      *  [FRAME_FLUSH_EVERY] frames on the background executor. */
     fun frame(ts: Long, payload: String) {
         // Bench mode: print each frame the moment it arrives — no buffering,
@@ -92,15 +105,20 @@ class TelemetryLogger(context: Context) {
             Log.i(TAG, "Frame[$ts]: $payload")
             return
         }
+        val fix = gps.currentFix()
+        val frame = BufferedFrame(
+            ts,
+            payload,
+            fix?.latitude,
+            fix?.longitude,
+            fix?.takeIf { it.hasAltitude() }?.altitude,
+        )
         synchronized(frameBuffer) {
-            frameBuffer.add(payload)
-            frameBufferTs.add(ts)
+            frameBuffer.add(frame)
             if (frameBuffer.size >= FRAME_FLUSH_EVERY) {
-                val payloads = ArrayList(frameBuffer)
-                val stamps = ArrayList(frameBufferTs)
+                val batch = ArrayList(frameBuffer)
                 frameBuffer.clear()
-                frameBufferTs.clear()
-                executor.execute { flushToDb(payloads, stamps) }
+                executor.execute { flushToDb(batch) }
             }
         }
     }
@@ -115,27 +133,27 @@ class TelemetryLogger(context: Context) {
             runCatching { uploadExecutor.awaitTermination(2, TimeUnit.SECONDS) }
             synchronized(frameBuffer) {
                 if (frameBuffer.isNotEmpty()) {
-                    flushToDb(ArrayList(frameBuffer), ArrayList(frameBufferTs))
+                    flushToDb(ArrayList(frameBuffer))
                     frameBuffer.clear()
-                    frameBufferTs.clear()
                 }
             }
+            gps.stop()
             db.close()
         }
     }
 
-    private fun flushToDb(payloads: List<String>, stamps: List<Long>) {
+    private fun flushToDb(frames: List<BufferedFrame>) {
         // Bench mode: skip SQLite and uploads entirely, print frames to logcat.
         // Flip LOG_ONLY to false to restore the store-and-upload pipeline.
         if (LOG_ONLY) {
-            for (i in payloads.indices) {
-                Log.i(TAG, "Frame[${stamps[i]}]: ${payloads[i]}")
+            for (f in frames) {
+                Log.i(TAG, "Frame[${f.ts}]: ${f.payload}")
             }
             return
         }
         try {
-            db.insertBatch(payloads, stamps, currentSessionId)
-            Log.d(TAG, "Stored ${payloads.size} frames")
+            db.insertBatch(frames, currentSessionId)
+            Log.d(TAG, "Stored ${frames.size} frames")
             // A flush is also a retry trigger: if rows are pending and the
             // last attempt is old enough (rate-limited in scheduleUpload),
             // try an upload — recovers without waiting for a network event.
@@ -231,7 +249,10 @@ class TelemetryLogger(context: Context) {
         if (batch.isEmpty()) return Step.DONE
         val (code, body) = postJson(
             "/telemetry/bulk",
-            TelemetryApi.bulkBody(sessionId, batch.map { it.ts to it.payload }),
+            TelemetryApi.bulkBody(
+                sessionId,
+                batch.map { TelemetryApi.TelemetryRow(it.ts, it.payload, it.lat, it.lon, it.alt) },
+            ),
         )
         return when {
             code in 200..299 -> {
@@ -309,11 +330,28 @@ class TelemetryLogger(context: Context) {
             -1 to ""
         }
 
+    /** One frame held in RAM before its SQLite flush, with the GPS fix that
+     *  was current at capture time. */
+    private data class BufferedFrame(
+        val ts: Long,
+        val payload: String,
+        val lat: Double?,
+        val lon: Double?,
+        val alt: Double?,
+    )
+
     /** One buffered row pulled for upload. */
-    private data class PendingRow(val id: Long, val ts: Long, val payload: String)
+    private data class PendingRow(
+        val id: Long,
+        val ts: Long,
+        val payload: String,
+        val lat: Double?,
+        val lon: Double?,
+        val alt: Double?,
+    )
 
     private class TelemetryDbHelper(context: Context) :
-        SQLiteOpenHelper(context, "telemetry.db", null, 2) {
+        SQLiteOpenHelper(context, "telemetry.db", null, 3) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -321,6 +359,9 @@ class TelemetryLogger(context: Context) {
                     "_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "ts INTEGER NOT NULL, " +
                     "session_id INTEGER NOT NULL DEFAULT 0, " +
+                    "latitude REAL, " +
+                    "longitude REAL, " +
+                    "altitude_m REAL, " +
                     "payload TEXT NOT NULL)",
             )
             db.execSQL("CREATE INDEX idx_samples_session ON samples(session_id)")
@@ -335,16 +376,25 @@ class TelemetryLogger(context: Context) {
                 // into the first new session and corrupt its trip stats.
                 db.execSQL("DELETE FROM samples")
             }
+            if (oldVersion < 3) {
+                // GPS arrives with the row; null columns = no fresh fix.
+                db.execSQL("ALTER TABLE samples ADD COLUMN latitude REAL")
+                db.execSQL("ALTER TABLE samples ADD COLUMN longitude REAL")
+                db.execSQL("ALTER TABLE samples ADD COLUMN altitude_m REAL")
+            }
         }
 
-        fun insertBatch(payloads: List<String>, stamps: List<Long>, sessionId: Long) {
+        fun insertBatch(frames: List<BufferedFrame>, sessionId: Long) {
             writableDatabase.beginTransaction()
             try {
-                for (i in payloads.indices) {
+                for (f in frames) {
                     val v = ContentValues().apply {
-                        put("ts", stamps[i])
+                        put("ts", f.ts)
                         put("session_id", sessionId)
-                        put("payload", payloads[i])
+                        put("payload", f.payload)
+                        f.lat?.let { put("latitude", it) }
+                        f.lon?.let { put("longitude", it) }
+                        f.alt?.let { put("altitude_m", it) }
                     }
                     writableDatabase.insert("samples", null, v)
                 }
@@ -358,12 +408,26 @@ class TelemetryLogger(context: Context) {
         fun takeBatch(sessionId: Long, limit: Int, includeUnassigned: Boolean): List<PendingRow> {
             val out = ArrayList<PendingRow>(limit)
             val query = if (includeUnassigned) {
-                "SELECT _id, ts, payload FROM samples WHERE session_id IN (?, 0) ORDER BY _id ASC LIMIT ?"
+                "SELECT _id, ts, payload, latitude, longitude, altitude_m FROM samples " +
+                    "WHERE session_id IN (?, 0) ORDER BY _id ASC LIMIT ?"
             } else {
-                "SELECT _id, ts, payload FROM samples WHERE session_id = ? ORDER BY _id ASC LIMIT ?"
+                "SELECT _id, ts, payload, latitude, longitude, altitude_m FROM samples " +
+                    "WHERE session_id = ? ORDER BY _id ASC LIMIT ?"
             }
             readableDatabase.rawQuery(query, arrayOf(sessionId.toString(), limit.toString())).use { c ->
-                while (c.moveToNext()) out.add(PendingRow(c.getLong(0), c.getLong(1), c.getString(2)))
+                fun nullableDouble(i: Int): Double? = if (c.isNull(i)) null else c.getDouble(i)
+                while (c.moveToNext()) {
+                    out.add(
+                        PendingRow(
+                            c.getLong(0),
+                            c.getLong(1),
+                            c.getString(2),
+                            nullableDouble(3),
+                            nullableDouble(4),
+                            nullableDouble(5),
+                        ),
+                    )
+                }
             }
             return out
         }
@@ -443,7 +507,7 @@ class TelemetryLogger(context: Context) {
         // TODO: point at your Car Telemetry Server
         const val BASE_URL = "http://192.168.1.100:3000"
         // Must match the server's DEVICE_API_TOKEN env (exact string match).
-        const val DEVICE_API_TOKEN = "CHANGE_ME"
+        const val DEVICE_API_TOKEN = "c236a4e1e5bee1e2d229b627c8e51158000844543d0873811ff0933dac9be7a6"
         const val DEVICE_ID = "headunit-001"
         // TODO: whatever identifies the car
         const val VEHICLE_ID = "vw-pq"

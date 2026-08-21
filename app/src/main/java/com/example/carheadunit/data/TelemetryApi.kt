@@ -29,10 +29,19 @@ internal object TelemetryApi {
         JSONObject(body).getJSONObject("data").getLong("sessionId")
     }.getOrNull()
 
+    /** One buffered row headed for /telemetry/bulk (GPS captured at recording time). */
+    internal data class TelemetryRow(
+        val ts: Long,
+        val payload: String,
+        val lat: Double?,
+        val lon: Double?,
+        val alt: Double?,
+    )
+
     /** /telemetry/bulk body for one session's rows, oldest first. */
-    fun bulkBody(sessionId: Long, rows: List<Pair<Long, String>>): String {
+    fun bulkBody(sessionId: Long, rows: List<TelemetryRow>): String {
         val samples = JSONArray()
-        for ((ts, payload) in rows) samples.put(toSample(payload, ts))
+        for (r in rows) samples.put(toSample(r.payload, r.ts, r.lat, r.lon, r.alt))
         return JSONObject().put("sessionId", sessionId).put("samples", samples).toString()
     }
 
@@ -46,8 +55,15 @@ internal object TelemetryApi {
 
     /** One stored frame payload -> one TelemetrySample. Unknown signals are
      *  ignored, absent fields are omitted, and non-finite numbers are dropped
-     *  (org.json throws on NaN/Infinity). */
-    fun toSample(payload: String, tsMs: Long): JSONObject {
+     *  (org.json throws on NaN/Infinity). GPS attaches when a fresh fix was
+     *  captured at recording time (lat+lon together, altitude on its own). */
+    fun toSample(
+        payload: String,
+        tsMs: Long,
+        lat: Double? = null,
+        lon: Double? = null,
+        alt: Double? = null,
+    ): JSONObject {
         val out = JSONObject().put("ts", formatTs(tsMs))
         val src = runCatching { JSONObject(payload) }.getOrNull() ?: return out
         fun num(signal: String, field: String, asInt: Boolean = false) {
@@ -73,9 +89,8 @@ internal object TelemetryApi {
         num("MO5_CONSUMPTION", "fuelConsumptionUl", asInt = true)
         num("BATTERY_VOLTAGE", "batteryVoltage")
         // Steering: |angle| plus a separate sign bit (1 = right = positive,
-        // same convention as buildSnapshot). buildFrameJson appends the sign
-        // whenever the angle is logged, so both are always present together;
-        // the 0 default only applies to hand-written test payloads.
+        // same convention as buildSnapshot). Currently excluded at the source
+        // (EXCLUDED_SIGNALS) — the mapping stays so re-enabling is one line.
         val angle = src.optDouble("LW1_STEERING_ANGLE", Double.NaN)
         if (angle.isFinite()) {
             val sign = src.optDouble("LW1_STEER_ANG_SIGN", 0.0)
@@ -84,6 +99,8 @@ internal object TelemetryApi {
         // GEAR (the 0..15 raw code) is skipped on purpose: the server's
         // `gear` field wants a ≤2-char string and there's no code table in
         // the app; GEAR_VALUE carries the numeric gear instead.
+        // Lamp/indicator/brake booleans are currently excluded at the source
+        // (EXCLUDED_SIGNALS); the mappings stay so re-enabling is one line.
         lit("TURN_LEFT", "turnLeft")
         lit("TURN_RIGHT", "turnRight")
         lit("DRIVER_DOOR_OPEN", "driverDoorOpen")
@@ -101,6 +118,11 @@ internal object TelemetryApi {
         lit("REVERSE_LIGHT", "reverseLight")
         lit("BRAKE_LIGHT", "brakeLight")
         lit("CHARGE_WARNING", "chargeWarning")
+        if (lat != null && lon != null) {
+            out.put("latitude", lat)
+            out.put("longitude", lon)
+        }
+        alt?.let { out.put("altitudeM", it) }
         return out
     }
 }

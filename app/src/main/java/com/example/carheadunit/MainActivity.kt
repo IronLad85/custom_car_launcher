@@ -1,5 +1,7 @@
 package com.example.carheadunit
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -7,9 +9,11 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.content.ContextCompat
 import com.example.carheadunit.data.MediaActionType
 import com.example.carheadunit.ui.HomeScreen
 import com.example.carheadunit.ui.LauncherViewModel
@@ -19,13 +23,26 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: LauncherViewModel by viewModels()
 
+    // One-time GPS permission at launch; telemetry works without it.
+    private val locationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            viewModel.onLocationPermissionResult(granted)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)        // Dark system bar icons over the dark gradient, regardless of the device's
+        super.onCreate(savedInstanceState)
+        // Dark system bar icons over the dark gradient, regardless of the device's
         // system theme; the OS status bar stays visible.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
 
         // The home screen never finishes: back closes the drawer, otherwise it is consumed.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
