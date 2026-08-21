@@ -19,3 +19,13 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Release builds strip debug/info log calls: logcat writes go through binder
+# and are surprisingly expensive at telemetry frame rates on weak SoCs.
+# Diagnostics stay available on debug builds; w/e are kept for real problems.
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+    public static int i(...);
+    public static boolean isLoggable(...);
+}

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 android {
@@ -19,6 +20,9 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        // The app is English-only: strip every other locale's resources for
+        // a smaller APK and lighter resource loading on weak units.
+        resourceConfigurations += listOf("en")
     }
 
     buildTypes {
@@ -71,6 +75,9 @@ dependencies {
     testImplementation(libs.junit)
     // Real org.json for host JVM tests of TelemetryApi (runtime uses Android's built-in).
     testImplementation("org.json:json:20240303")
+    // Baseline profiles: ART pre-compiles the app's hot paths on install, so
+    // cold start isn't fully interpreted on slow head-unit SoCs.
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
