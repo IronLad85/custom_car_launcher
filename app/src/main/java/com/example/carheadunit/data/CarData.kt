@@ -39,7 +39,4 @@ data class CarSnapshot(
  */
 interface CarDataSource {
     fun snapshot(): CarSnapshot
-
-    /** Serialized dump of ALL received signals (for telemetry logging); null when unavailable. */
-    fun signalDump(): String? = null
 }

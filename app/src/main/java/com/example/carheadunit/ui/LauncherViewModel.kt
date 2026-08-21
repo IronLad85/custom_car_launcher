@@ -79,8 +79,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     init {
-        // Log EVERY USB data frame (per-frame timestamps + changed signals),
-        // not just the 10 s snapshots — full-resolution data for analysis.
+        // Log EVERY USB data frame (per-frame timestamps + changed signals) —
+        // full-resolution data for the telemetry server.
         usbSource.frameListener = { ts, payload -> telemetryLogger.frame(ts, payload) }
         refreshApps()
         refreshMediaAccess()
@@ -93,10 +93,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
         // Live telemetry tick: USB source when connected, static zeros offline.
         viewModelScope.launch {
-            var tickCount = 0
             while (isActive) {
-                // Frozen while another app is in front: no state refresh, no
-                // telemetry sampling of stale values, no chimes.
+                // Frozen while another app is in front: no state refresh, no chimes.
                 if (!backgrounded) {
                     val snap = dataSource.snapshot()
                     _snapshot.value = snap.copy(
@@ -113,11 +111,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                     indicatorsOn = indOn
-                    tickCount++
-                    // Log ALL received signals every 10 s (interval, not per message)
-                    if (tickCount % LOG_SAMPLE_TICKS == 0) {
-                        dataSource.signalDump()?.let { telemetryLogger.sample(it) }
-                    }
                 }
                 delay(TICK_MS)
             }
@@ -234,8 +227,6 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         const val KEY_DOCK_PINS = "dock_pins"
         // UI refresh cadence: ~8 Hz keeps the gauges responsive on live data.
         const val TICK_MS = 128L
-        // Telemetry sampling stays at 10 s: 10 s / 128 ms ≈ 78 ticks.
-        const val LOG_SAMPLE_TICKS = 78
         // Indicator chimes are edge-triggered per blink; debounce guards
         // against flapping lamp signals turning into a beep storm.
         const val CHIME_MIN_INTERVAL_MS = 250L

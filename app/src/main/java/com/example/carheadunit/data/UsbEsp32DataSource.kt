@@ -93,18 +93,16 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
 
     /** Invoked on the USB reader thread for every data frame the device sends:
      *  (capture epoch-ms, compact JSON of that frame's changed signals).
-     *  Recording filter: EXCLUDED_SIGNALS are never logged; ENGINE_RPM and
-     *  SPEED are deadbanded (10 s minimum interval, immediate on big jumps).
+     *  Recording filter: EXCLUDED_SIGNALS are never logged; ENGINE_RPM is
+     *  deadbanded (10 s minimum interval, immediate on big jumps).
      *  Empty heartbeat frames are skipped. Wired by the ViewModel. */
     @Volatile
     var frameListener: ((Long, String) -> Unit)? = null
 
-    // Deadband state for high-rate signals (USB reader thread only):
+    // Deadband state for ENGINE_RPM (USB reader thread only):
     // store at most once per MIN_INTERVAL unless the value jumps ≥ MIN_DELTA.
     private var lastRpmLogged = Float.NaN
     private var lastRpmLogAt = 0L
-    private var lastSpeedLogged = Float.NaN
-    private var lastSpeedLogAt = 0L
 
     // The 'V' reply is plain ASCII ("CANSniffer proto:1 fw:x.y ...\n"), not
     // CBOR — feeding it to the parser misaligns the stream and eats the
@@ -221,21 +219,6 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         if (!connected) return CarSnapshot() // offline: static defaults, dock shows the link state
         val values: Map<String, Float> = synchronized(signalValues) { HashMap(signalValues) }
         return buildSnapshot(values)
-    }
-
-    override fun signalDump(): String? {
-        if (!connected) return null
-        val values: Map<String, Float> = synchronized(signalValues) { HashMap(signalValues) }
-        val sb = StringBuilder("{")
-        var count = 0
-        for ((name, value) in values) {
-            if (name in EXCLUDED_SIGNALS) continue
-            if (count > 0) sb.append(',')
-            sb.append('"').append(name).append("\":").append(value)
-            count++
-        }
-        sb.append("}")
-        return sb.toString()
     }
 
     // ---- connection ----
@@ -381,11 +364,9 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         parser.reset()
         signalMeta.clear()
         synchronized(signalValues) { signalValues.clear() }
-        // Fresh session: the first RPM/SPEED values pass the deadband.
+        // Fresh session: the first RPM value passes the deadband.
         lastRpmLogged = Float.NaN
         lastRpmLogAt = 0L
-        lastSpeedLogged = Float.NaN
-        lastSpeedLogAt = 0L
         bannerPending = false
         dataFrames = 0
         dataSignals = 0
@@ -619,45 +600,54 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     }
 
     /** Compact JSON of one frame's changed signals, e.g. {"SPEED":42.5,...}.
-     *  EXCLUDED_SIGNALS are dropped; RPM/SPEED pass a deadband (see below). */
+     *  EXCLUDED_SIGNALS are dropped; ENGINE_RPM passes a deadband (see below).
+     *  SPEED is logged at full frame rate — the server derives hard accel/brake
+     *  events from consecutive per-second speed deltas. */
     private fun buildFrameJson(pairs: List<*>, ts: Long): String? {
         val sb = StringBuilder("{")
         var count = 0
+        var hasSteerAngle = false
+        var hasSteerSign = false
         for (p in pairs) {
             val pair = p as? List<*> ?: continue
             val index = (pair.getOrNull(0) as? Number)?.toLong() ?: continue
             val raw = (pair.getOrNull(1) as? Number)?.toFloat() ?: continue
             val name = signalMeta[index]?.name ?: "i$index"
             if (name in EXCLUDED_SIGNALS) continue
-            if (name == "ENGINE_RPM" && !worthLogging(raw, ts, rpm = true)) continue
-            if (name == "SPEED" && !worthLogging(raw, ts, rpm = false)) continue
+            if (name == "ENGINE_RPM" && !worthLogging(raw, ts)) continue
+            if (name == "LW1_STEERING_ANGLE") hasSteerAngle = true
+            if (name == "LW1_STEER_ANG_SIGN") hasSteerSign = true
             if (count > 0) sb.append(',')
             sb.append('"').append(name).append("\":").append(raw)
             count++
         }
         if (count == 0) return null
+        // Steering composite: the sign bit only changes when the wheel crosses
+        // center, so frames carrying the angle almost never carry the sign.
+        // Append the current sign so each stored frame is self-contained for
+        // the server. (Read pre-update is correct: a sign that changed THIS
+        // frame is already in pairs and skips this append.)
+        if (hasSteerAngle && !hasSteerSign) {
+            sb.append(",\"LW1_STEER_ANG_SIGN\":").append(currentSteerSign())
+        }
         sb.append("}")
         return sb.toString()
     }
 
-    /** Deadband gate: true when ≥10 s since the last store or the value jumped
-     *  ≥200 rpm / ≥4 km/h. Stores update the last-value state. */
-    private fun worthLogging(value: Float, ts: Long, rpm: Boolean): Boolean {
-        val lastValue = if (rpm) lastRpmLogged else lastSpeedLogged
-        val lastAt = if (rpm) lastRpmLogAt else lastSpeedLogAt
-        val delta = if (rpm) RPM_MIN_DELTA else SPEED_MIN_DELTA
+    /** Latest LW1_STEER_ANG_SIGN; 0 (left) before the first report. */
+    private fun currentSteerSign(): Float =
+        synchronized(signalValues) { signalValues["LW1_STEER_ANG_SIGN"] ?: 0f }
+
+    /** RPM deadband gate: true when ≥10 s since the last store or the value
+     *  jumped ≥200 rpm. Stores update the last-value state. */
+    private fun worthLogging(value: Float, ts: Long): Boolean {
         // NaN-safe: abs(NaN) comparisons are false, so the first sample of a
         // session passes via the interval rule (lastAt = 0).
-        val bigJump = abs(value - lastValue) >= delta
-        val intervalElapsed = ts - lastAt >= DEADBAND_MIN_INTERVAL_MS
+        val bigJump = abs(value - lastRpmLogged) >= RPM_MIN_DELTA
+        val intervalElapsed = ts - lastRpmLogAt >= DEADBAND_MIN_INTERVAL_MS
         if (!bigJump && !intervalElapsed) return false
-        if (rpm) {
-            lastRpmLogged = value
-            lastRpmLogAt = ts
-        } else {
-            lastSpeedLogged = value
-            lastSpeedLogAt = ts
-        }
+        lastRpmLogged = value
+        lastRpmLogAt = ts
         return true
     }
 
@@ -723,17 +713,14 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         // Registry is paced at 20 ms per entry (32 entries ≈ 640 ms); check
         // for lost entries a safe margin after the first entry arrives.
         const val REGISTRY_GRACE_MS = 1_500L
-        // Recording filter: these signals never reach the DB (too noisy for
-        // the analysis; they still drive the UI).
-        val EXCLUDED_SIGNALS = setOf(
-            "MO5_CONSUMPTION", "BATTERY_VOLTAGE", "COOLANT_TEMP",
-            "LW1_STEERING_ANGLE", "LW1_STEER_ANG_SIGN", "BRAKE_PRESSURE",
-        )
-        // Deadband for ENGINE_RPM / SPEED: at most one frame entry per
-        // interval, unless the value jumps by the delta (then immediately).
+        // Recording filter: these signals never reach the DB. The server's
+        // trip stats need consumption/temps/voltage/steering, so only
+        // BRAKE_PRESSURE stays out (no API field for it).
+        val EXCLUDED_SIGNALS = setOf("BRAKE_PRESSURE")
+        // Deadband for ENGINE_RPM: at most one frame entry per interval,
+        // unless the value jumps by the delta (then immediately).
         const val DEADBAND_MIN_INTERVAL_MS = 10_000L
         const val RPM_MIN_DELTA = 200f
-        const val SPEED_MIN_DELTA = 4f
         // Cadence of the human-readable "USB data flowing" log line.
         const val DATA_LOG_INTERVAL_MS = 10_000L
         // Full-lock steering wheel rotation in degrees: the track maps this
