@@ -33,6 +33,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.carheadunit.R
 import com.example.carheadunit.data.MediaInfo
 import com.example.carheadunit.ui.theme.GlassBorder
@@ -133,7 +134,8 @@ fun MediaTile(
                         Text(
                             text = media.trackTitle,
                             style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = MaterialTheme.typography.titleLarge.fontSize,
+                                fontSize = 22.sp,
+                                lineHeight = 28.sp,
                             ),
                             color = OnSurface,
                             maxLines = 1,
@@ -141,7 +143,10 @@ fun MediaTile(
                         )
                         Text(
                             text = media.artist,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 16.sp,
+                                lineHeight = 22.sp,
+                            ),
                             color = OnSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
