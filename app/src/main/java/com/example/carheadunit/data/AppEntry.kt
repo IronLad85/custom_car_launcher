@@ -12,4 +12,7 @@ data class AppEntry(
     val activityName: String,
     val label: String,
     val icon: ImageBitmap,
-)
+) {
+    /** Stable identity for pins: one entry per launchable activity. */
+    val key: String get() = "$packageName/$activityName"
+}

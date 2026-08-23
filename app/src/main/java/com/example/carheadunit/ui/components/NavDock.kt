@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,16 +40,22 @@ import com.example.carheadunit.data.AppEntry
 import com.example.carheadunit.data.UsbLinkState
 import com.example.carheadunit.ui.theme.OnSurface
 import com.example.carheadunit.ui.theme.OnSurfaceVariant
+import com.example.carheadunit.ui.theme.OutlineVariant
 import com.example.carheadunit.ui.theme.PrimaryContainer
 import com.example.carheadunit.ui.theme.SurfaceContainer
+import com.example.carheadunit.ui.theme.SurfaceLowest
 import com.example.carheadunit.ui.theme.TopBorderWhite10
 
 private const val MAX_DOCK_ITEMS = 8
 
 /**
- * Bottom nav dock in the design's language: solid #1e2023 bar, 80dp tall,
- * top border, 28px icons with mono labels. Pinned apps live here; the
- * all-apps item takes the active (cyan + dot) state while the drawer is open.
+ * Bottom bar in the design's language: solid #1e2023, 80dp tall, top border,
+ * split into two sections — the ESP/USB status chip in its own darker panel
+ * on the left, and the app bar (pinned apps + all-apps item) filling the
+ * rest. The panel and its divider span the full dock height (including the
+ * system bottom inset) so the split reads edge-to-edge; the app bar's own
+ * content area stays 66dp. The all-apps item takes the active (cyan + dot)
+ * state while the drawer is open.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -72,49 +80,74 @@ fun NavDock(
                 .height(1.dp)
                 .background(TopBorderWhite10),
         )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(66.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            // ESP/USB status section: its own darker panel. The panel and the
+            // divider span the full dock height — including any system bottom
+            // inset — so the section reads edge-to-edge instead of floating
+            // above a strip of bar color. The inset is consumed as padding
+            // inside the panel (after the background), so the chip centers in
+            // the same 66dp content band as the app icons.
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.Center),
-                verticalAlignment = Alignment.CenterVertically,
+                    .width(180.dp)
+                    .fillMaxHeight()
+                    .background(SurfaceLowest)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+                contentAlignment = Alignment.Center,
             ) {
-                // Status chip owns its layout slot at the left — the middle
-                // content centers in the remaining space instead of drawing
-                // underneath it.
-                UsbStatusChip(
-                    state = usbStatus,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center,
+                UsbStatusChip(state = usbStatus)
+            }
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(OutlineVariant),
+            )
+            // App bar section: pinned apps centered in the remaining width.
+            // Its own bottom inset keeps the bar's content area at 66dp.
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(66.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (pinned.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.dock_empty_hint),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = OnSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceAround,
-                        ) {
-                            pinned.take(MAX_DOCK_ITEMS).forEach { app ->
-                                DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (pinned.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.dock_empty_hint),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = OnSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceAround,
+                            ) {
+                                pinned.take(MAX_DOCK_ITEMS).forEach { app ->
+                                    DockItem(app = app, onLaunch = onLaunch, onUnpin = onUnpin)
+                                }
                             }
                         }
                     }
+                    AllAppsItem(active = drawerOpen, onClick = onOpenAllApps)
                 }
-                AllAppsItem(active = drawerOpen, onClick = onOpenAllApps)
             }
         }
     }
@@ -165,7 +198,7 @@ private fun DockItem(
             .clip(RoundedCornerShape(8.dp))
             .combinedClickable(
                 onClick = { onLaunch(app) },
-                onLongClick = { onUnpin(app.packageName) },
+                onLongClick = { onUnpin(app.key) },
             )
             .padding(horizontal = 8.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

@@ -18,6 +18,11 @@ val OnSurface = Color(0xFFE2E2E6)
 val OnSurfaceVariant = Color(0xFFBAC9CC)
 val White20 = Color(0x33FFFFFF)              // inactive icons, tick marks
 
+// All-apps page (opaque white: reads as its own page, not a popup)
+val AllAppsBackground = Color.White
+val OnAllApps = Color(0xFF17191C)            // labels/titles on the white page
+val OnAllAppsVariant = Color(0xFFC6CBD0)     // inactive page dots
+
 // Cyan family (primary)
 val PrimaryContainer = Color(0xFF00E5FF)     // glows, fills
 val Primary = Color(0xFFC3F5FF)

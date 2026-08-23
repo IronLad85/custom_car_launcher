@@ -199,8 +199,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         // Icon decoding + package queries are the slow part on weak SoCs — off the main thread.
         viewModelScope.launch(Dispatchers.IO) {
             _apps.value = appsRepository.loadLaunchableApps()
-            // Drop pins for apps that are no longer installed
-            val installed = _apps.value.map { it.packageName }.toSet()
+            // Drop pins for entries that are no longer installed. Keys are
+            // packageName/activityName, so old package-only pins from before
+            // the identity fix are dropped here too.
+            val installed = _apps.value.map { it.key }.toSet()
             if (_pinned.value != _pinned.value.intersect(installed)) {
                 _pinned.value = _pinned.value.intersect(installed)
                 persistPins()
@@ -208,9 +210,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun togglePin(packageName: String) {
+    fun togglePin(appKey: String) {
         val current = _pinned.value
-        _pinned.value = if (packageName in current) current - packageName else current + packageName
+        _pinned.value = if (appKey in current) current - appKey else current + appKey
         persistPins()
     }
 

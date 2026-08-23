@@ -2,11 +2,7 @@ package com.example.carheadunit.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -32,15 +28,16 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * NovaLink OS dashboard home: solid charcoal base with an ambient cyan glow,
  * the dashboard (indicators/steering/speed/metrics/nav/media) with the
- * all-apps drawer over it, and the persistent app dock.
+ * full-screen all-apps page over it, and the persistent app dock.
  *
  * Performance notes for low-end head units:
- *  - The drawer is composed ONCE at startup and stays composed (alpha 0
+ *  - The all-apps page is composed ONCE at startup and stays composed (alpha 0
  *    draws nothing), so opening it is instant instead of paying the full
- *    first-composition cost on tap.
- *  - The telemetry flow is collected inside [Dashboard]; while the drawer is
+ *    first-composition cost on tap; its pager pages are lazy, so only the
+ *    visible page is ever composed.
+ *  - The telemetry flow is collected inside [Dashboard]; while the page is
  *    open it is swapped for a static flow, so the tick recomposes nothing
- *    under the scrolling grid.
+ *    under the app grid.
  *  - The ambient glow is a remembered modifier — drawn once, not re-shaded.
  */
 @Composable
@@ -79,7 +76,7 @@ fun HomeScreen(
                 )
             }
     }
-    val pinnedApps = remember(apps, pinnedSet) { apps.filter { it.packageName in pinnedSet } }
+    val pinnedApps = remember(apps, pinnedSet) { apps.filter { it.key in pinnedSet } }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -96,9 +93,9 @@ fun HomeScreen(
             onRequestMediaAccess = onRequestMediaAccess,
             modifier = Modifier.zIndex(1f),
         )
-        // Pre-warmed drawer: composed once at startup and kept composed —
-        // zIndex puts it below the dashboard while closed (no touch
-        // pass-through) and above when open; alpha 0 draws nothing.
+        // Pre-warmed all-apps page: composed once at startup and kept
+        // composed — zIndex puts it below the dashboard while closed (no
+        // touch pass-through) and above when open; alpha 0 draws nothing.
         AllAppsScreen(
             apps = apps,
             pinned = pinnedSet,
@@ -107,8 +104,6 @@ fun HomeScreen(
             onClose = onCloseDrawer,
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(bottom = 74.dp)
                 .zIndex(if (drawerOpen) 2f else 0f)
                 .alpha(if (drawerOpen) 1f else 0f),
         )
