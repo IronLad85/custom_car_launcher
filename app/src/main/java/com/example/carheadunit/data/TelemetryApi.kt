@@ -13,6 +13,9 @@ import java.time.Instant
  *  - `ts` must be ISO-8601 WITH an offset; epoch-ms rows are converted here.
  *  - Every TelemetrySample field except `ts` is optional; absent fields are
  *    omitted from the JSON rather than sent as null.
+ *  - `engineRpm` is the one forward-filled field: payloads carry only changed
+ *    signals, but a sample without engineRpm reads as engine-off to the
+ *    server, so the logger re-attaches the last known value while > 0.
  *  - Stored frame payloads are {"SIGNAL_NAME":float,...} maps of the signals
  *    that changed in that frame (names from the firmware registry).
  */
@@ -21,29 +24,45 @@ internal object TelemetryApi {
     /** Epoch ms -> ISO-8601 with offset, e.g. 2026-08-21T12:34:56.789Z. */
     fun formatTs(ms: Long): String = Instant.ofEpochMilli(ms).toString()
 
-    fun startBody(deviceId: String, vehicleId: String): String =
-        JSONObject().put("deviceId", deviceId).put("vehicleId", vehicleId).toString()
-
-    /** data.sessionId from a /sessions/start 201 body; null when not parseable. */
-    fun parseSessionId(body: String): Long? = runCatching {
-        JSONObject(body).getJSONObject("data").getLong("sessionId")
-    }.getOrNull()
-
-    /** One buffered row headed for /telemetry/bulk (GPS captured at recording time). */
+    /** One buffered row headed for /telemetry/bulk (GPS and the forward-filled
+     *  engineRpm captured at recording time). */
     internal data class TelemetryRow(
         val ts: Long,
         val payload: String,
+        val engineRpm: Int,
         val lat: Double?,
         val lon: Double?,
         val alt: Double?,
     )
 
-    /** /telemetry/bulk body for one session's rows, oldest first. */
-    fun bulkBody(sessionId: Long, rows: List<TelemetryRow>): String {
+    /** /telemetry/bulk body, oldest rows first. Sessions are server-managed
+     *  (opened at the first engineRpm > 0 sample, closed after a > 5 min
+     *  gap), so every push carries deviceId/vehicleId and no session id. */
+    fun bulkBody(deviceId: String, vehicleId: String, rows: List<TelemetryRow>): String {
         val samples = JSONArray()
-        for (r in rows) samples.put(toSample(r.payload, r.ts, r.lat, r.lon, r.alt))
-        return JSONObject().put("sessionId", sessionId).put("samples", samples).toString()
+        for (r in rows) {
+            samples.put(toSample(r.payload, r.ts, r.lat, r.lon, r.alt, r.engineRpm))
+        }
+        return JSONObject()
+            .put("deviceId", deviceId)
+            .put("vehicleId", vehicleId)
+            .put("samples", samples)
+            .toString()
     }
+
+    /** {data:{sessionId,inserted,dropped}} ack from /telemetry/bulk; null when
+     *  not parseable. sessionId is null when everything was dropped — that's
+     *  not an error, just engine-off samples with no open session. */
+    data class BulkAck(val sessionId: Long?, val inserted: Int, val dropped: Int)
+
+    fun parseBulkAck(body: String): BulkAck? = runCatching {
+        val data = JSONObject(body).getJSONObject("data")
+        BulkAck(
+            sessionId = if (data.isNull("sessionId")) null else data.getLong("sessionId"),
+            inserted = data.getInt("inserted"),
+            dropped = data.getInt("dropped"),
+        )
+    }.getOrNull()
 
     /** Human-readable reason from an error body ({"error","message"}); null when absent. */
     fun errorMessage(body: String): String? = runCatching {
@@ -53,16 +72,30 @@ internal object TelemetryApi {
         else null
     }.getOrNull()
 
+    /** ENGINE_RPM (rounded) from a stored frame payload; null when the signal
+     *  is absent or not finite. */
+    fun parseEngineRpm(payload: String): Int? = runCatching {
+        val v = JSONObject(payload).optDouble("ENGINE_RPM", Double.NaN)
+        if (v.isFinite()) Math.round(v).toInt() else null
+    }.getOrNull()
+
     /** One stored frame payload -> one TelemetrySample. Unknown signals are
      *  ignored, absent fields are omitted, and non-finite numbers are dropped
      *  (org.json throws on NaN/Infinity). GPS attaches when a fresh fix was
-     *  captured at recording time (lat+lon together, altitude on its own). */
+     *  captured at recording time (lat+lon together, altitude on its own).
+     *
+     *  engineRpm: the logger's forward-filled value at recording time, when
+     *  known — an override because payloads carry only changed signals and a
+     *  sample without engineRpm reads as engine-off to the server. Null falls
+     *  back to the payload. Either way it is sent ONLY when > 0; a sample
+     *  missing engineRpm is an engine-off sample. */
     fun toSample(
         payload: String,
         tsMs: Long,
         lat: Double? = null,
         lon: Double? = null,
         alt: Double? = null,
+        engineRpm: Int? = null,
     ): JSONObject {
         val out = JSONObject().put("ts", formatTs(tsMs))
         val src = runCatching { JSONObject(payload) }.getOrNull() ?: return out
@@ -76,7 +109,9 @@ internal object TelemetryApi {
             if (!v.isFinite()) return
             out.put(field, v >= 0.5)
         }
-        num("ENGINE_RPM", "engineRpm", asInt = true)
+        val rpm = engineRpm ?: src.optDouble("ENGINE_RPM", Double.NaN)
+            .let { if (it.isFinite()) Math.round(it).toInt() else 0 }
+        if (rpm > 0) out.put("engineRpm", rpm)
         num("THROTTLE", "throttlePct")
         num("SPEED", "speedKmh", asInt = true)
         num("FUEL_LEVEL", "fuelLevelL")

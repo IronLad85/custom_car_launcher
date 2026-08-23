@@ -622,7 +622,7 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         return sb.toString()
     }
 
-    /** RPM deadband gate: true when ≥10 s since the last store or the value
+    /** RPM deadband gate: true when ≥9 s since the last store or the value
      *  jumped ≥200 rpm. Stores update the last-value state. */
     private fun worthLogging(value: Float, ts: Long): Boolean {
         // NaN-safe: abs(NaN) comparisons are false, so the first sample of a
@@ -712,7 +712,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         )
         // Deadband for ENGINE_RPM: at most one frame entry per interval,
         // unless the value jumps by the delta (then immediately).
-        const val DEADBAND_MIN_INTERVAL_MS = 10_000L
+        // 9 s, slightly under the firmware's 10 s full-snapshot cadence: a
+        // sweep can arrive a tick early under scheduling jitter, and an
+        // exactly-10 s gate would drop it, halving the rpm update rate.
+        const val DEADBAND_MIN_INTERVAL_MS = 9_000L
         const val RPM_MIN_DELTA = 200f
         // Cadence of the human-readable "USB data flowing" log line.
         const val DATA_LOG_INTERVAL_MS = 10_000L

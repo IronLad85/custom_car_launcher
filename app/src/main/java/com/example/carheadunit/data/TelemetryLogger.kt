@@ -27,12 +27,15 @@ import java.util.concurrent.TimeUnit
  *     gives up and waits for the next trigger
  *  4. an oldest-first cap keeps the DB bounded during long offline periods
  *
- * Sessions: the server accepts samples only into open sessions, and ends a
- * device's previous session when it starts a new one. The app therefore
- * starts one session per process run (on the first recorded frame) and never
- * ends sessions itself. Rows carry their session_id: past sessions drain
- * before the new session starts (so their tail isn't 409'd), and rows of a
- * 404/409'd session are re-homed into a fresh one rather than dropped.
+ * Sessions are server-side only: the server opens a session at the first
+ * engineRpm > 0 sample, closes it once data gaps exceed 5 min, and opens a
+ * new one at the next engineRpm > 0 sample. The app never starts, tracks, or
+ * ends sessions — it just keeps pushing, and every bulk body carries
+ * deviceId/vehicleId. Payloads carry only changed signals, so the last known
+ * ENGINE_RPM is forward-filled into every sample while non-zero (a sample
+ * without engineRpm reads as engine-off and is dropped server-side — counted
+ * in `dropped` — when no session is open). Dropped samples are not retried;
+ * the ack's inserted/dropped counts are only logged.
  *
  * Flushes and uploads run on separate single threads: a long upload retry
  * loop can never block buffered frames from reaching SQLite.
@@ -54,11 +57,11 @@ class TelemetryLogger(context: Context) {
     // batch transactions; frames arrive far more often than the flush size).
     private val frameBuffer = ArrayList<BufferedFrame>()
 
-    // Server session for rows recorded by THIS process run; 0 until started.
-    // Written only on the upload thread, read by the flush thread when
-    // tagging rows — volatile keeps the two in sync.
-    @Volatile
-    private var currentSessionId = 0L
+    // Last known ENGINE_RPM for forward-fill: payloads carry only signals
+    // that changed, and a sample without engineRpm reads as engine-off to the
+    // server. 0 = engine off / unknown; only touched on the USB reader thread
+    // (frame() is the sole writer and reader).
+    private var lastEngineRpm = 0
 
     @Volatile
     private var lastUploadAttemptAt = 0L
@@ -105,10 +108,17 @@ class TelemetryLogger(context: Context) {
             Log.i(TAG, "Frame[$ts]: $payload")
             return
         }
+        // Engine state captured at recording time (like the GPS fix): the
+        // frame's own ENGINE_RPM updates the running value; a frame without
+        // it keeps the last known value while it's > 0. Stored per row so
+        // offline uploads re-attach the state the sample was recorded with.
+        TelemetryApi.parseEngineRpm(payload)?.let { lastEngineRpm = it }
+        val engineRpm = if (lastEngineRpm > 0) lastEngineRpm else 0
         val fix = gps.currentFix()
         val frame = BufferedFrame(
             ts,
             payload,
+            engineRpm,
             fix?.latitude,
             fix?.longitude,
             fix?.takeIf { it.hasAltitude() }?.altitude,
@@ -152,7 +162,7 @@ class TelemetryLogger(context: Context) {
             return
         }
         try {
-            db.insertBatch(frames, currentSessionId)
+            db.insertBatch(frames)
             Log.d(TAG, "Stored ${frames.size} frames")
             // A flush is also a retry trigger: if rows are pending and the
             // last attempt is old enough (rate-limited in scheduleUpload),
@@ -209,70 +219,51 @@ class TelemetryLogger(context: Context) {
     }
 
     /**
-     * One state-machine step, run on the upload thread only:
-     *  1. DRAIN past sessions — rows tagged by a previous process run upload
-     *     into their still-open session BEFORE a new one starts (starting a
-     *     new session ends the old one server-side and would 409 those rows).
-     *  2. START — once nothing past is pending and unassigned rows exist,
-     *     open this run's session and retag the unassigned rows onto it.
-     *  3. UPLOAD — batches of the current session. A current-session batch
-     *     sweeps session_id IN (current, 0) so no flush-thread race can
-     *     strand an untagged row.
-     * A 404/409 marks a session permanently dead: it is never retried; its
-     * rows are re-homed into a fresh session (data preserved, queue moves on).
+     * One state-machine step, run on the upload thread only: POST the oldest
+     * pending rows to /telemetry/bulk. Sessions are server-managed (opened at
+     * the first engineRpm > 0 sample, closed after a > 5 min data gap), so
+     * there is no start call, no session id, and no 404/409 recovery — a 2xx
+     * ack deletes the batch even when `dropped` > 0 (dropped samples would
+     * just be dropped again on retry).
      */
     private fun step(): Step {
-        // Phase 1: drain past sessions, oldest first.
-        val pastId = db.oldestPastSessionId(currentSessionId)
-        if (pastId != 0L) {
-            return uploadBatch(pastId)
+        if (!db.hasPendingRows()) {
+            Log.d(TAG, "Upload: nothing pending")
+            return Step.DONE
         }
-        // Phase 2: start this run's session once unassigned rows exist.
-        if (currentSessionId == 0L) {
-            if (!db.hasUnassignedRows()) {
-                Log.d(TAG, "Upload: nothing pending")
-                return Step.DONE
-            }
-            val newId = startSession()
-            if (newId == 0L) return Step.RETRY
-            currentSessionId = newId
-            db.assignUnassigned(newId)
-        }
-        // Phase 3: upload the current session.
-        return uploadBatch(currentSessionId)
+        return uploadBatch()
     }
 
-    private fun uploadBatch(sessionId: Long): Step {
-        // Current-session batches sweep stragglers: a row the flush thread
-        // tagged 0 after START's reassign belongs to the current session too.
-        val batch = db.takeBatch(sessionId, BATCH_SIZE, includeUnassigned = sessionId == currentSessionId)
+    private fun uploadBatch(): Step {
+        val batch = db.takeBatch(BATCH_SIZE)
         if (batch.isEmpty()) return Step.DONE
         val (code, body) = postJson(
             "/telemetry/bulk",
             TelemetryApi.bulkBody(
-                sessionId,
-                batch.map { TelemetryApi.TelemetryRow(it.ts, it.payload, it.lat, it.lon, it.alt) },
+                DEVICE_ID,
+                VEHICLE_ID,
+                batch.map { TelemetryApi.TelemetryRow(it.ts, it.payload, it.engineRpm, it.lat, it.lon, it.alt) },
             ),
         )
         return when {
             code in 200..299 -> {
                 db.deleteIds(batch.map { it.id })
-                Log.i(TAG, "Uploaded ${batch.size} samples (session=$sessionId)")
+                val ack = TelemetryApi.parseBulkAck(body)
+                if (ack != null) {
+                    // sessionId is null when everything was dropped — engine-off
+                    // samples with no open session; not an error, not retried.
+                    Log.i(TAG, "Uploaded ${ack.inserted} samples, ${ack.dropped} dropped (session=${ack.sessionId})")
+                } else {
+                    Log.i(TAG, "Uploaded ${batch.size} samples")
+                }
                 Step.OK
             }
-            code == 404 || code == 409 -> {
-                // Session permanently dead (ended or never existed): retrying
-                // can't help and would stall the oldest-first queue. Re-home
-                // the rows into a fresh session instead of dropping them.
-                Log.w(TAG, "Session $sessionId dead ($code): ${TelemetryApi.errorMessage(body) ?: "no message"}")
-                if (sessionId == currentSessionId) currentSessionId = 0L
-                if (currentSessionId == 0L) {
-                    val newId = startSession()
-                    if (newId == 0L) return Step.RETRY
-                    currentSessionId = newId
-                }
-                db.retag(sessionId, currentSessionId)
-                Step.OK
+            code == 400 -> {
+                // Bad body — a request-building bug in this app; backoff won't
+                // fix it, but retrying on the next trigger lets a fix pick up
+                // without an app restart.
+                Log.e(TAG, "Upload rejected: BAD REQUEST — check the bulk body: ${TelemetryApi.errorMessage(body) ?: body}")
+                Step.RETRY
             }
             code == 401 -> {
                 // Token/config error — backoff won't fix it, but retrying on
@@ -286,26 +277,6 @@ class TelemetryLogger(context: Context) {
                 Step.RETRY
             }
         }
-    }
-
-    /** POST /sessions/start; returns the new session id, or 0 on failure. */
-    private fun startSession(): Long {
-        val (code, body) = postJson("/sessions/start", TelemetryApi.startBody(DEVICE_ID, VEHICLE_ID))
-        if (code !in 200..299) {
-            if (code == 401) {
-                Log.e(TAG, "Session start rejected: UNAUTHORIZED — check DEVICE_API_TOKEN against the server env")
-            } else {
-                Log.w(TAG, "Session start failed (code=$code): ${TelemetryApi.errorMessage(body) ?: body}")
-            }
-            return 0L
-        }
-        val id = TelemetryApi.parseSessionId(body)
-        if (id == null) {
-            Log.w(TAG, "Session start returned an unparseable body: $body")
-            return 0L
-        }
-        Log.i(TAG, "Session $id started (device=$DEVICE_ID, vehicle=$VEHICLE_ID)")
-        return id
     }
 
     /** POSTs a JSON body to BASE_URL + path. Returns (httpCode, responseBody);
@@ -330,11 +301,13 @@ class TelemetryLogger(context: Context) {
             -1 to ""
         }
 
-    /** One frame held in RAM before its SQLite flush, with the GPS fix that
-     *  was current at capture time. */
+    /** One frame held in RAM before its SQLite flush, with the GPS fix and
+     *  forward-filled engineRpm (0 = engine off) that were current at capture
+     *  time. */
     private data class BufferedFrame(
         val ts: Long,
         val payload: String,
+        val engineRpm: Int,
         val lat: Double?,
         val lon: Double?,
         val alt: Double?,
@@ -345,26 +318,26 @@ class TelemetryLogger(context: Context) {
         val id: Long,
         val ts: Long,
         val payload: String,
+        val engineRpm: Int,
         val lat: Double?,
         val lon: Double?,
         val alt: Double?,
     )
 
     private class TelemetryDbHelper(context: Context) :
-        SQLiteOpenHelper(context, "telemetry.db", null, 3) {
+        SQLiteOpenHelper(context, "telemetry.db", null, 4) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 "CREATE TABLE samples (" +
                     "_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "ts INTEGER NOT NULL, " +
-                    "session_id INTEGER NOT NULL DEFAULT 0, " +
+                    "engine_rpm INTEGER NOT NULL DEFAULT 0, " +
                     "latitude REAL, " +
                     "longitude REAL, " +
                     "altitude_m REAL, " +
                     "payload TEXT NOT NULL)",
             )
-            db.execSQL("CREATE INDEX idx_samples_session ON samples(session_id)")
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -382,15 +355,38 @@ class TelemetryLogger(context: Context) {
                 db.execSQL("ALTER TABLE samples ADD COLUMN longitude REAL")
                 db.execSQL("ALTER TABLE samples ADD COLUMN altitude_m REAL")
             }
+            if (oldVersion < 4) {
+                // Session model removed (the server manages sessions on its
+                // own): drop session_id and carry the forward-filled
+                // engineRpm per row instead. Rebuild preserves rows; old
+                // rows get engine_rpm=0 (unknown engine state, treated as
+                // engine-off by the server).
+                db.execSQL("ALTER TABLE samples RENAME TO samples_old")
+                db.execSQL(
+                    "CREATE TABLE samples (" +
+                        "_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        "ts INTEGER NOT NULL, " +
+                        "engine_rpm INTEGER NOT NULL DEFAULT 0, " +
+                        "latitude REAL, " +
+                        "longitude REAL, " +
+                        "altitude_m REAL, " +
+                        "payload TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "INSERT INTO samples (_id, ts, engine_rpm, latitude, longitude, altitude_m, payload) " +
+                        "SELECT _id, ts, 0, latitude, longitude, altitude_m, payload FROM samples_old",
+                )
+                db.execSQL("DROP TABLE samples_old")
+            }
         }
 
-        fun insertBatch(frames: List<BufferedFrame>, sessionId: Long) {
+        fun insertBatch(frames: List<BufferedFrame>) {
             writableDatabase.beginTransaction()
             try {
                 for (f in frames) {
                     val v = ContentValues().apply {
                         put("ts", f.ts)
-                        put("session_id", sessionId)
+                        put("engine_rpm", f.engineRpm)
                         put("payload", f.payload)
                         f.lat?.let { put("latitude", it) }
                         f.lon?.let { put("longitude", it) }
@@ -405,16 +401,13 @@ class TelemetryLogger(context: Context) {
             prune()
         }
 
-        fun takeBatch(sessionId: Long, limit: Int, includeUnassigned: Boolean): List<PendingRow> {
+        fun takeBatch(limit: Int): List<PendingRow> {
             val out = ArrayList<PendingRow>(limit)
-            val query = if (includeUnassigned) {
-                "SELECT _id, ts, payload, latitude, longitude, altitude_m FROM samples " +
-                    "WHERE session_id IN (?, 0) ORDER BY _id ASC LIMIT ?"
-            } else {
-                "SELECT _id, ts, payload, latitude, longitude, altitude_m FROM samples " +
-                    "WHERE session_id = ? ORDER BY _id ASC LIMIT ?"
-            }
-            readableDatabase.rawQuery(query, arrayOf(sessionId.toString(), limit.toString())).use { c ->
+            readableDatabase.rawQuery(
+                "SELECT _id, ts, payload, engine_rpm, latitude, longitude, altitude_m FROM samples " +
+                    "ORDER BY _id ASC LIMIT ?",
+                arrayOf(limit.toString()),
+            ).use { c ->
                 fun nullableDouble(i: Int): Double? = if (c.isNull(i)) null else c.getDouble(i)
                 while (c.moveToNext()) {
                     out.add(
@@ -422,9 +415,10 @@ class TelemetryLogger(context: Context) {
                             c.getLong(0),
                             c.getLong(1),
                             c.getString(2),
-                            nullableDouble(3),
+                            c.getInt(3),
                             nullableDouble(4),
                             nullableDouble(5),
+                            nullableDouble(6),
                         ),
                     )
                 }
@@ -441,52 +435,12 @@ class TelemetryLogger(context: Context) {
             )
         }
 
-        /** Re-homes rows of a dead session onto a live one. */
-        fun retag(from: Long, to: Long) =
-            chunkedSessionIdUpdate(to, "session_id = ?", arrayOf(from.toString()))
-
-        /** Adopts all untagged rows into the given session. */
-        fun assignUnassigned(to: Long) =
-            chunkedSessionIdUpdate(to, "session_id = 0", emptyArray())
-
-        /**
-         * Rewrites session_id in [RETAG_CHUNK]-row steps. One UPDATE over
-         * ~2M rows would hold SQLite's write lock for tens of seconds on a
-         * weak head unit, stalling flushes behind it; chunked updates yield
-         * the lock between steps so inserts interleave.
-         */
-        private fun chunkedSessionIdUpdate(to: Long, fromClause: String, fromArgs: Array<String>) {
-            val stmt = writableDatabase.compileStatement(
-                "UPDATE samples SET session_id = ? WHERE _id IN " +
-                    "(SELECT _id FROM samples WHERE $fromClause LIMIT $RETAG_CHUNK)",
-            )
-            try {
-                while (true) {
-                    stmt.bindLong(1, to)
-                    for (i in fromArgs.indices) stmt.bindString(i + 2, fromArgs[i])
-                    // Fewer than a full chunk means the subquery ran dry.
-                    if (stmt.executeUpdateDelete() < RETAG_CHUNK) return
-                }
-            } finally {
-                stmt.close()
-            }
-        }
-
-        /** Oldest session id among rows that are neither untagged nor the
-         *  current session; 0 when none. Past-session rows must drain before
-         *  a new session starts (the server ends the old one at that point). */
-        fun oldestPastSessionId(current: Long): Long =
+        /** Cheap existence check (index-assisted on the PK, one row read) — a
+         *  COUNT(*) over up to 2M rows would be a full scan on every upload
+         *  pass. */
+        fun hasPendingRows(): Boolean =
             readableDatabase.rawQuery(
-                "SELECT session_id FROM samples WHERE session_id NOT IN (0, ?) " +
-                    "GROUP BY session_id ORDER BY MIN(_id) ASC LIMIT 1",
-                arrayOf(current.toString()),
-            ).use { c -> if (c.moveToFirst()) c.getLong(0) else 0L }
-
-        /** Cheap existence check (index-assisted, one row read) — a COUNT(*)
-         *  over up to 2M rows would be a full scan on every upload pass. */
-        fun hasUnassignedRows(): Boolean =
-            readableDatabase.rawQuery(
-                "SELECT 1 FROM samples WHERE session_id = 0 LIMIT 1",
+                "SELECT 1 FROM samples LIMIT 1",
                 null,
             ).use { it.moveToFirst() }
 
@@ -508,6 +462,8 @@ class TelemetryLogger(context: Context) {
         const val BASE_URL = "https://car-data-server.techstark.in"
         // Must match the server's DEVICE_API_TOKEN env (exact string match).
         const val DEVICE_API_TOKEN = "c236a4e1e5bee1e2d229b627c8e51158000844543d0873811ff0933dac9be7a6"
+        // Same identifier the old /sessions/start call sent — every bulk push
+        // carries it so the server can group samples into sessions per device.
         const val DEVICE_ID = "headunit-001"
         // TODO: whatever identifies the car
         const val VEHICLE_ID = "vw-pq"
@@ -523,7 +479,5 @@ class TelemetryLogger(context: Context) {
         // 2M rows ≈ several days of per-frame data at driving rates; uploads
         // on daily WiFi drain it long before the cap. Tune if needed.
         const val MAX_ROWS = 2_000_000
-        // Rows per step for chunked session_id rewrites (retag/assign).
-        const val RETAG_CHUNK = 50_000
     }
 }

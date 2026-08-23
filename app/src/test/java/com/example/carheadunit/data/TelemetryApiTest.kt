@@ -87,6 +87,38 @@ class TelemetryApiTest {
         assertEquals(12, s.getInt("speedKmh"))
     }
 
+    // ---- engineRpm forward-fill ----
+
+    @Test
+    fun toSample_forwardFillsEngineRpmWhenKnownAndRunning() {
+        // Payloads carry only changed signals: an unchanged engineRpm is
+        // re-attached from the logger's last known value (the override).
+        val s = TelemetryApi.toSample("""{"SPEED":12.0}""", 0L, engineRpm = 800)
+        assertEquals(800, s.getInt("engineRpm"))
+    }
+
+    @Test
+    fun toSample_omitsEngineRpmWhenEngineOff() {
+        val s = TelemetryApi.toSample("""{"SPEED":12.0}""", 0L, engineRpm = 0)
+        assertFalse(s.has("engineRpm"))
+    }
+
+    @Test
+    fun toSample_overrideWinsOverPayload() {
+        // The recorded engine state is authoritative; a contradictory payload
+        // cannot occur in the logger flow (the override derives from it).
+        val s = TelemetryApi.toSample("""{"ENGINE_RPM":2499.6}""", 0L, engineRpm = 0)
+        assertFalse(s.has("engineRpm"))
+    }
+
+    @Test
+    fun parseEngineRpm_readsAndRounds() {
+        assertEquals(2500, TelemetryApi.parseEngineRpm("""{"ENGINE_RPM":2499.6}"""))
+        assertEquals(0, TelemetryApi.parseEngineRpm("""{"ENGINE_RPM":0.0}"""))
+        assertNull(TelemetryApi.parseEngineRpm("""{"SPEED":12.0}"""))
+        assertNull(TelemetryApi.parseEngineRpm("{not json"))
+    }
+
     @Test
     fun toSample_unparseablePayloadYieldsTsOnlySample() {
         val ms = 1753700401123L
@@ -137,39 +169,53 @@ class TelemetryApiTest {
     // ---- bulkBody ----
 
     @Test
-    fun bulkBody_buildsSessionAndSamplesArray() {
+    fun bulkBody_carriesDeviceAndSamplesArray() {
         val rows = listOf(
-            TelemetryApi.TelemetryRow(1L, """{"SPEED":10.0}""", null, null, null),
-            TelemetryApi.TelemetryRow(2L, """{"ENGINE_RPM":1000.0}""", 48.137, 11.576, 519.0),
+            TelemetryApi.TelemetryRow(1L, """{"SPEED":10.0}""", 0, null, null, null),
+            TelemetryApi.TelemetryRow(2L, """{"ENGINE_RPM":1000.0}""", 1000, 48.137, 11.576, 519.0),
         )
-        val o = JSONObject(TelemetryApi.bulkBody(42L, rows))
-        assertEquals(42L, o.getLong("sessionId"))
+        val o = JSONObject(TelemetryApi.bulkBody("headunit-001", "vw-pq", rows))
+        assertEquals("headunit-001", o.getString("deviceId"))
+        assertEquals("vw-pq", o.getString("vehicleId"))
+        assertFalse(o.has("sessionId")) // sessions are server-managed now
         val samples = o.getJSONArray("samples")
         assertEquals(2, samples.length())
         assertEquals(10, samples.getJSONObject(0).getInt("speedKmh"))
         assertFalse(samples.getJSONObject(0).has("latitude"))
+        assertFalse(samples.getJSONObject(0).has("engineRpm")) // engine off
         assertEquals(1000, samples.getJSONObject(1).getInt("engineRpm"))
         assertEquals(48.137, samples.getJSONObject(1).getDouble("latitude"), 1e-9)
         assertEquals(519.0, samples.getJSONObject(1).getDouble("altitudeM"), 1e-9)
     }
 
-    // ---- startBody / parseSessionId / errorMessage ----
+    @Test
+    fun bulkBody_forwardFillsUnchangedEngineRpm() {
+        // A row recorded while the engine ran but whose payload lacks
+        // ENGINE_RPM (unchanged signal) still carries the forward-filled value.
+        val rows = listOf(TelemetryApi.TelemetryRow(1L, """{"SPEED":10.0}""", 800, null, null, null))
+        val samples = JSONObject(TelemetryApi.bulkBody("headunit-001", "vw-pq", rows)).getJSONArray("samples")
+        assertEquals(800, samples.getJSONObject(0).getInt("engineRpm"))
+    }
+
+    // ---- parseBulkAck / errorMessage ----
 
     @Test
-    fun startBody_carriesDeviceAndVehicle() {
-        val o = JSONObject(TelemetryApi.startBody("headunit-001", "vw-pq"))
-        assertEquals("headunit-001", o.getString("deviceId"))
-        assertEquals("vw-pq", o.getString("vehicleId"))
+    fun parseBulkAck_readsCountsAndNullableSessionId() {
+        val ack = TelemetryApi.parseBulkAck("""{"data":{"sessionId":5,"inserted":2,"dropped":1}}""")
+        assertEquals(5L, ack?.sessionId)
+        assertEquals(2, ack?.inserted)
+        assertEquals(1, ack?.dropped)
+        // sessionId null when everything was dropped — not an error.
+        val allDropped = TelemetryApi.parseBulkAck("""{"data":{"sessionId":null,"inserted":0,"dropped":3}}""")
+        assertNull(allDropped?.sessionId)
+        assertEquals(0, allDropped?.inserted)
+        assertEquals(3, allDropped?.dropped)
     }
 
     @Test
-    fun parseSessionId_readsDataField() {
-        assertEquals(
-            7L,
-            TelemetryApi.parseSessionId("""{"data":{"sessionId":7,"startedAt":"2026-08-21T12:00:00Z"}}"""),
-        )
-        assertNull(TelemetryApi.parseSessionId("""{"error":"UNAUTHORIZED","message":"nope"}"""))
-        assertNull(TelemetryApi.parseSessionId("garbage"))
+    fun parseBulkAck_unparseableYieldsNull() {
+        assertNull(TelemetryApi.parseBulkAck("""{"error":"X","message":"nope"}"""))
+        assertNull(TelemetryApi.parseBulkAck("garbage"))
     }
 
     @Test
