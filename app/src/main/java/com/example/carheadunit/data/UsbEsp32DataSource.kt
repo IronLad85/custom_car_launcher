@@ -94,8 +94,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     /** Invoked on the USB reader thread for every data frame the device sends:
      *  (capture epoch-ms, compact JSON of that frame's changed signals).
      *  Recording filter: EXCLUDED_SIGNALS are never logged; ENGINE_RPM is
-     *  deadbanded (10 s minimum interval, immediate on big jumps).
-     *  Empty heartbeat frames are skipped. Wired by the ViewModel. */
+     *  deadbanded (10 s minimum interval, immediate on big jumps); frames
+     *  identical to the previous one are dropped until the dedupe keepalive
+     *  window elapses. Empty heartbeat frames are skipped. Wired by the
+     *  ViewModel. */
     @Volatile
     var frameListener: ((Long, String) -> Unit)? = null
 
@@ -103,6 +105,12 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     // store at most once per MIN_INTERVAL unless the value jumps ≥ MIN_DELTA.
     private var lastRpmLogged = Float.NaN
     private var lastRpmLogAt = 0L
+
+    // Consecutive-duplicate suppression (USB reader thread only): the last
+    // emitted frame JSON and its capture time. A frame identical to it is
+    // dropped unless the keepalive window has elapsed (see buildFrameJson).
+    private var lastEmittedJson: String? = null
+    private var lastEmittedAt = 0L
 
     // The 'V' reply is plain ASCII ("CANSniffer proto:1 fw:x.y ...\n"), not
     // CBOR — feeding it to the parser misaligns the stream and eats the
@@ -367,6 +375,9 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         // Fresh session: the first RPM value passes the deadband.
         lastRpmLogged = Float.NaN
         lastRpmLogAt = 0L
+        // Fresh session: the first frame passes the dedupe.
+        lastEmittedJson = null
+        lastEmittedAt = 0L
         bannerPending = false
         dataFrames = 0
         dataSignals = 0
@@ -602,7 +613,10 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
     /** Compact JSON of one frame's changed signals, e.g. {"SPEED":42.5,...}.
      *  EXCLUDED_SIGNALS are dropped; ENGINE_RPM passes a deadband (see below).
      *  SPEED is logged at full frame rate — the server derives hard accel/brake
-     *  events from consecutive per-second speed deltas. */
+     *  events from consecutive per-second speed deltas. A frame identical to
+     *  the previous emitted one is skipped unless the dedupe keepalive window
+     *  has elapsed, so steady-state stretches (idling, constant cruise) stop
+     *  re-storing the same payload at every ~10 s snapshot. */
     private fun buildFrameJson(pairs: List<*>, ts: Long): String? {
         val sb = StringBuilder("{")
         var count = 0
@@ -619,7 +633,20 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         }
         if (count == 0) return null
         sb.append("}")
-        return sb.toString()
+        val json = sb.toString()
+        // Consecutive-duplicate suppression (reader thread only, like the RPM
+        // deadband state): a frame whose payload is identical to the last
+        // emitted one adds no information, so drop it — unless the keepalive
+        // window has elapsed, which force-stores a heartbeat row. The server
+        // closes a session after a >5 min data gap, so 60 s keeps sessions
+        // alive while cutting steady-state rows from one-per-snapshot to
+        // one-per-minute. Payload identity is complete: engine_rpm and the GPS
+        // fix are captured from the same frame state, so identical payloads
+        // would produce identical rows apart from the timestamp.
+        if (json == lastEmittedJson && ts - lastEmittedAt < DEDUPE_KEEPALIVE_MS) return null
+        lastEmittedJson = json
+        lastEmittedAt = ts
+        return json
     }
 
     /** RPM deadband gate: true when ≥9 s since the last store or the value
@@ -717,6 +744,11 @@ class UsbEsp32DataSource(private val context: Context) : CarDataSource {
         // exactly-10 s gate would drop it, halving the rpm update rate.
         const val DEADBAND_MIN_INTERVAL_MS = 9_000L
         const val RPM_MIN_DELTA = 200f
+        // Consecutive-duplicate keepalive: a frame identical to the last
+        // emitted one is skipped unless this long has elapsed since it was
+        // emitted (a heartbeat row keeps the server session alive — it closes
+        // after a >5 min data gap, so 60 s is a safe steady-state cadence).
+        const val DEDUPE_KEEPALIVE_MS = 60_000L
         // Cadence of the human-readable "USB data flowing" log line.
         const val DATA_LOG_INTERVAL_MS = 10_000L
         // Full-lock steering wheel rotation in degrees: the track maps this
